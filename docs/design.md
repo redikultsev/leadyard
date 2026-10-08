@@ -394,7 +394,9 @@ validates it against the schema. Anything else in the text is ignored for gating
 ````
 
 - `status` is `pass`, `warn` or `fail`. A missing or unparseable block is `fail`.
-- A finding `id` is a hash of its normalized text, so it stays stable across rounds.
+- A finding `id` is computed by the CLI as a hash of the normalized file and summary, so it
+  stays stable across rounds. Ids written by the model are ignored: in a probe the reviewer
+  numbered findings `F1`, `F2`, which would not survive a second round.
 - A repeat review must report the state of every previous finding (`fixed`, `open`,
   `replaced`).
 - `next` comes from a closed list in the stage contract.
@@ -438,21 +440,41 @@ hardcoded values) are the most frequent correction humans make.
 **Intake.** Reads the tracker item and comments, finds the relevant code, looks for prior work
 (branches, closed tasks), collects real cases and their frequency when the project provides a
 data source. Writes the task file with the request verbatim. Proposes the risk class.
+- The search scope is a fixed list in the stage contract: the tracker item and linked items,
+  code search for the terms of the request, branches and tasks closed in the last N days, the
+  project's case source if configured. The output lists what was searched and what was skipped
+  with a reason.
+- "Is it already done?" is answered with raw links (branch, commit, task). Any conclusion drawn
+  from them is labeled as the agent's reading.
+- Each of the five risk answers quotes the line of the request or diff it rests on. The zone part
+  of the class comes from `leadyard zones check`, not from the agent.
+- The stage runs under a budget from config (tool calls and wall-clock time, counted by the CLI).
 
 **Clarify.** Asks only what blocks the next stage. One round contains every question whose
 prerequisites are settled. Each question has options and a recommendation. Answers are recorded
-as decisions.
+as decisions. The same round lists the assumptions the agent made without asking, so the human
+sees what was decided silently.
 
-**Plan.** Writes numbered steps with checkboxes. Every significant rule in the plan has a
-source (request, decision, code). An unresolved conflict stops the stage with `needs_human`.
+**Plan.** Writes numbered steps with checkboxes and an explicit "out of scope" list. Every
+significant rule in the plan has a source (request, decision, code). An unresolved conflict stops
+the stage with `needs_human`.
 
-**Implement.** Works through the plan. Ticks a checkbox right after its step. For a fix:
-first a test that fails, then the change, then the same test passes; the test is never adjusted
-to fit the implementation. Commits on the task branch (§7).
+**Implement.** Works through the plan and ticks a checkbox after each step. A checkbox shows
+progress; it is not acceptance. Acceptance comes only from evidence (§5.4). Commits on the task
+branch (§7).
+- For a fix: first a test that fails, then the change, then the same test passes. The CLI checks
+  this: a `failed` record for the test at commit A, a `passed` record at a later commit B, and the
+  test file unchanged between A and B. A test edited in between means it was adjusted to the
+  implementation; the pair does not count.
+- The stage runs under a budget from config. At the budget checkpoint the agent stops and
+  answers one question in the task file: what tool or approach would turn the remaining work
+  into minutes. Any caveat in the agent's report ("done, except ...") is listed to the human as an
+  open item.
 
 **Scope audit.** Deterministic part (CLI): files in the diff that the plan does not mention,
 new config keys, env vars, feature flags, dependencies, changes in protected paths, zones
-touched. Model part: hardcoded values, departures from recorded decisions. Output: a list with
+touched. Model part: hardcoded values, departures from recorded decisions. The model part runs in
+a fresh session, like the review, so the implementer does not audit itself. Output: a list with
 "remove / keep with reason", answered by the human.
 
 **Review.** Runs in a fresh session with the diff, the request and the plan, without the
@@ -465,15 +487,26 @@ requirement. Below the requirement, the human is not asked. At or above it, the 
 level with links, findings left open, what was not checked, the scope audit result.
 
 **Stand.** Runs scenarios derived from the diff plus regression scenarios on a local or test
-environment. Results are tied to the commit and the tree digest. For non-deterministic systems
-it uses §5.6.
+environment.
+- Before the run, the agent writes the scenario list with the expected outcome of each and a list
+  of scenarios it left out with the reason. The CLI hashes this list into the evidence record, so
+  expectations cannot change after the results are seen.
+- Pass or fail comes from the runner (exit code, assertions, or §5.6 for non-deterministic
+  systems), not from the agent reading the output.
+- Where the data comes from is declared in config as a check (`kind: compare` or a scenario
+  runner). If no data source is configured, the stage says so and does not invent cases.
+- For class 3 the human approves the scenario list together with the plan, in one approval.
+- Results are tied to the commit and the tree digest.
 
 **Merge package.** Builds the draft PR body from the task: closes the tracker item, what
-changed, how it was verified (links), what was not verified, deploy order, notes for QA.
-Checks the changelog rule of the project.
+changed, how it was verified, what was not verified, deploy order, notes for QA. Every
+"verified" line comes from an evidence record with its link; text written by the agent (deploy
+notes, QA notes) is marked as such. Checks the changelog rule of the project.
 
-**Watch.** After the human reports a deploy: reads logs, metrics and events the project
-configured, compares before and after, and records level 5 or a regression with links.
+**Watch.** After the human reports a deploy: runs the queries the project configured for logs,
+metrics and events over a window set in config, and compares before and after with the method of
+§5.6. Level 5 is recorded only from that comparison (`not_worse` or `better`); a regression is
+recorded with links. The agent writes a summary of what changed, marked as its reading.
 
 ### 6.3 Default skills
 
@@ -774,6 +807,13 @@ Built after the developer loop (§20). Outline:
   name a date to anyone.
 - **Statuses come from artifacts:** the status of a task is what its evidence and transitions
   say, not what someone reported.
+- **Triage:** the agent proposes duplicates, links, missing information and a draft risk class
+  for incoming items. Priority is the tech lead's decision; the agent does not rank by value.
+- **Risk signals** are produced by rules the CLI evaluates: work older than its expected time,
+  no activity for N days, stale evidence, a forecast range that moved. The agent may add signals
+  it sees; those are marked as its reading.
+- **Reports** show generated numbers and tables. The interpretation is written by the tech lead,
+  or drafted by the agent and marked as a draft.
 - **Notifications** are a plug-in module. By default it sends only "waiting for a human" and
   "blocked", as `{task, from, to, waiting_for, reason}`.
 
@@ -782,8 +822,9 @@ Built after the developer loop (§20). Outline:
 - Durable knowledge lives only in repository files: decisions, glossary, rules, lessons.
   leadyard does not use or write the agents' built-in memory.
 - **Lesson format:** problem, root cause, fix, prevention, tags, files, and two required fields:
-  where it was promoted (a rule, a check, a zone, a checklist item) and a review date. A rule is
-  created from a lesson only with a human's approval.
+  where it was promoted (a rule, a check, a zone, a checklist item) and a review date. The root
+  cause written by the agent is marked as its conclusion until a human promotes the lesson. A rule
+  is created from a lesson only with a human's approval.
 
 ## 14. Third-party skills
 
@@ -887,6 +928,9 @@ All commands support `--json` and never prompt in `unattended` mode.
 2. Statistical method for §5.6 (sign test, bootstrap, or another) and the default tolerance.
 3. Starting thresholds that need calibration on real data: PR size warning, watch window.
 4. Final name. Renaming touches the CLI name, the config directory and the trailer namespace.
+5. Whether a review verdict without open blocking findings may count as level 3 on its own, or
+   only together with a mechanical check (§23).
+6. The human time budget per task and per week, against the cost estimate in §23.
 
 ## 22. Prior art and credits
 
@@ -900,3 +944,50 @@ leadyard takes ideas, not code, from these public projects:
 - [lee-to/ai-factory](https://github.com/lee-to/ai-factory): verdict block as data, one writer per
   artifact, config written only by a script.
 - [lee-to/ai-tester](https://github.com/lee-to/ai-tester): live skill runs in a sandbox.
+
+## 23. Task shape
+
+What the design hands to an agent, which judgments hide inside each task, and who makes them.
+Columns: selection (what is worth doing or showing), acceptance (is it done and correct),
+inference (what a result means), stop (how much more work). "was → now" shows the change made
+in this revision. Hooks (why an agent at all): reading volume, exhaustive check, code, routine
+(extract or draft from a named source that a mechanism or human checks cheaply).
+
+Derived from the list of stages, not from recorded episodes. One probe was run (below).
+
+| Task | Hook | Selection | Acceptance | Inference | Stop | Decision | Accepted by | Human cost |
+|---|---|---|---|---|---|---|---|---|
+| intake | reading volume | agent, scope fixed by contract (was: silent) | mechanism: required fields present | "already done?" as raw links; agent reading marked (was: agent) | CLI budget (was: silent) | reshape + split | CLI; human confirms class | 0.5 min |
+| risk answers | routine | — | human confirms | agent, each answer quotes its source; zones by CLI | — | split | human | in the line above |
+| clarify | routine | agent picks questions; assumptions listed (was: hidden) | human answers | recommendation marked | frontier empty | wrap | human | class 2–3: 3–5 min |
+| plan | code | agent; class 3 human approves; out-of-scope list added | human (class 3) | sources per rule | — | wrap | human | class 3: 5 min |
+| implement | code | — | evidence only; checkbox is progress (was: checkbox) | — | CLI budget + tool question (was: retries only) | reshape | CLI levels | — |
+| red-green check | code | — | CLI: failed at A, passed at B, test unchanged (was: agent says) | — | — | reshape | CLI | — |
+| scope audit, model part | exhaustive check | — | human: remove / keep | fresh session (was: implementer) | — | split | human | 1–2 min |
+| review | exhaustive check | severity by agent | open question §21.5 | findings raw, ids by CLI (was: model ids) | 5 rounds, convergence rule | wrap | human at verdict | in verdict |
+| verdict | — | — | human | not-verified list by CLI | — | mechanism | human | 2–4 min |
+| stand | code | scenarios by agent, exclusions listed, expectations hashed before run (was: silent) | runner (was: silent) | §5.6 | config | reshape + split | runner; class 3 human approves list with plan | in plan approval |
+| merge package | routine | — | human reads PR | verified lines from records only (was: free text) | — | reshape | human (already does) | — |
+| watch | routine | queries from config | §5.6 comparison (was: agent) | agent summary marked | window from config (was: silent) | reshape | CLI | 0.5 min (report deploy) |
+| triage (tech lead) | reading volume | priority by tech lead (was: silent) | tech lead | duplicates and gaps proposed | — | split | tech lead | tech lead's existing work |
+| risk signals | exhaustive check | rules by CLI; agent extras marked | tech lead | — | — | split | CLI + tech lead | — |
+| reports | routine | — | tech lead | interpretation by tech lead or marked draft (was: silent) | — | split | tech lead | weekly, ~10 min |
+| lesson | routine | — | human on promotion | root cause marked as agent conclusion | — | wrap | human | per promotion |
+
+Tests that fired (numbering of the agent-task shape check): self-declared "done" (1) for
+implement, stand, watch, red-green; raw results mixed with conclusions (2) for intake, watch,
+reports; silent scope narrowing (9) for intake, plan, stand; no external budget (8) for intake,
+implement; no data acquisition step (12) for stand; value judgment (5) for triage; a skeptic
+treated as acceptance (4) for review.
+
+**Probe.** A reviewer in a fresh session (one run, a mid-tier model) received a request
+("`date_to` inclusive"), a plan marked done and a diff with `created_at < date_to`. It found the
+bug and the missing boundary test, returned `fail`, and numbered findings `F1`–`F5`. The tests the
+implementer wrote passed with the bug present. One catch does not show how often a review
+returns a false `pass`; that remains unmeasured.
+
+**Human cost per task** (estimate, not measured): class 1 about 3.5 min (confirm class, scope
+audit answers, verdict); class 2 about 10 min (plus clarify and scope approval); class 3 about
+17 min (plus plan and scenario approval, deploy report). Merge and deploy are human work that
+existed before. At a weekly volume of `n1`, `n2`, `n3` tasks per class:
+`3.5·n1 + 10·n2 + 17·n3` minutes.
