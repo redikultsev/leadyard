@@ -886,8 +886,7 @@ All commands support `--json` and never prompt in `unattended` mode.
    how its `implement` commits relative to §7.
 2. Statistical method for §5.6 (sign test, bootstrap, or another) and the default tolerance.
 3. Starting thresholds that need calibration on real data: PR size warning, watch window.
-4. Copyright holder line for the MIT license.
-5. Final name. Renaming touches the CLI name, the config directory and the trailer namespace.
+4. Final name. Renaming touches the CLI name, the config directory and the trailer namespace.
 
 ## 22. Prior art and credits
 
