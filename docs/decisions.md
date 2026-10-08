@@ -126,3 +126,13 @@ edited; a new entry replaces an old one and links to it. Sections refer to
     big-bang release (§20).
 50. **Dogfooding:** leadyard is developed with leadyard from the first working commit.
 51. **Working name `leadyard`;** the final name is chosen later.
+
+## 2026-10-08 — after the task shape check (design §23)
+
+52. **Level 3 requires a mechanical check** (replaces 15): the project's pre-existing tests pass
+    and were not edited in the diff; a fresh-session review with no open blocking findings is a
+    required condition but never raises the level by itself. A project without tests lowers the
+    requirement explicitly with a recorded reason. Reason: a reviewer is a model too; it reduces
+    defects but is not acceptance (§5.4).
+53. **Human time budget:** about one hour a week for a single developer at six tasks; estimate
+    3.5 / 10 / 17 minutes per task of class 1 / 2 / 3 (§23).

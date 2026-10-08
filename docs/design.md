@@ -217,7 +217,7 @@ Rules:
 | 0 | claim | the agent says "done, works" |
 | 1 | static | lint, type check, build passed; link to the log |
 | 2 | agent tests | tests written for this task pass |
-| 3 | independent check | the project's existing test suite passes, or a reviewer in a fresh session without the implementation context found no blocking issues |
+| 3 | independent check | the project's existing tests pass and were not edited in this diff; the fresh-session review has no open blocking findings |
 | 4 | realistic data | old and new versions compared on real or recorded cases (§5.6) |
 | 5 | post-deploy | after deploy, the watch window passed without regressions |
 
@@ -265,9 +265,16 @@ Rules the CLI applies:
 7. **Negative control.** Every check type ships with a fixture on which it must fail. The
    framework's own tests run these fixtures.
 
-**Level 3 definition.** An independent check is a check that the implementing session cannot
-influence: the project's pre-existing test suite, or a review performed in a fresh session that
-receives the diff and the request but not the implementation conversation.
+**Level 3 definition.** An independent check is one the implementing session cannot influence.
+Level 3 requires both:
+1. a mechanical check: the project's pre-existing tests pass, and the CLI confirms that the test
+   files they consist of were not edited in this diff;
+2. a condition: a review performed in a fresh session (diff, request and plan, without the
+   implementation conversation) has no open blocking findings.
+
+A review alone never raises the level. A reviewer is a model too: it lowers the number of
+defects but is not acceptance. A project without a usable test suite cannot reach level 3; it
+lowers the class requirement explicitly, with a recorded reason (§5.5).
 
 ### 5.5 Risk classes
 
@@ -928,9 +935,6 @@ All commands support `--json` and never prompt in `unattended` mode.
 2. Statistical method for §5.6 (sign test, bootstrap, or another) and the default tolerance.
 3. Starting thresholds that need calibration on real data: PR size warning, watch window.
 4. Final name. Renaming touches the CLI name, the config directory and the trailer namespace.
-5. Whether a review verdict without open blocking findings may count as level 3 on its own, or
-   only together with a mechanical check (§23).
-6. The human time budget per task and per week, against the cost estimate in §23.
 
 ## 22. Prior art and credits
 
@@ -964,7 +968,7 @@ Derived from the list of stages, not from recorded episodes. One probe was run (
 | implement | code | — | evidence only; checkbox is progress (was: checkbox) | — | CLI budget + tool question (was: retries only) | reshape | CLI levels | — |
 | red-green check | code | — | CLI: failed at A, passed at B, test unchanged (was: agent says) | — | — | reshape | CLI | — |
 | scope audit, model part | exhaustive check | — | human: remove / keep | fresh session (was: implementer) | — | split | human | 1–2 min |
-| review | exhaustive check | severity by agent | open question §21.5 | findings raw, ids by CLI (was: model ids) | 5 rounds, convergence rule | wrap | human at verdict | in verdict |
+| review | exhaustive check | severity by agent | condition for level 3, never the level itself (was: counted as level 3) | findings raw, ids by CLI (was: model ids) | 5 rounds, convergence rule | wrap | human at verdict | in verdict |
 | verdict | — | — | human | not-verified list by CLI | — | mechanism | human | 2–4 min |
 | stand | code | scenarios by agent, exclusions listed, expectations hashed before run (was: silent) | runner (was: silent) | §5.6 | config | reshape + split | runner; class 3 human approves list with plan | in plan approval |
 | merge package | routine | — | human reads PR | verified lines from records only (was: free text) | — | reshape | human (already does) | — |
@@ -990,4 +994,5 @@ returns a false `pass`; that remains unmeasured.
 audit answers, verdict); class 2 about 10 min (plus clarify and scope approval); class 3 about
 17 min (plus plan and scenario approval, deploy report). Merge and deploy are human work that
 existed before. At a weekly volume of `n1`, `n2`, `n3` tasks per class:
-`3.5·n1 + 10·n2 + 17·n3` minutes.
+`3.5·n1 + 10·n2 + 17·n3` minutes. Accepted budget for a single developer: about one hour a
+week at six tasks.
