@@ -154,3 +154,16 @@ edited; a new entry replaces an old one and links to it. Sections refer to
     (§5.1, §5.7).
 60. **0.1 uses own thin skills for every stage;** the mattpocock pack integration comes later
     because its skills do not fit the stage contracts as is (§6.3). Refines 36.
+
+## 2026-10-08 — while building 0.1 (design §25, second pass)
+
+61. **0.1 ships one adapter, Claude Code** (replaces 2 for 0.1): several agents remain the target
+    of the first build step; Codex and Cursor follow in 0.2.
+62. **Config layers in 0.1: user and team** (refines 32): the per-repository personal layer is
+    deferred; the user layer may only tighten git policy.
+63. **Probes in 0.1 are local self-tests** (refines 49): `doctor` checks the wrapper and the gate;
+    live agent probes come with the Codex and Cursor adapters.
+64. **The gate protects only the ledger, the event log and the config files;** `task.md` stays
+    editable because intake, plan and notes write it (§8.2).
+65. **Git hooks act only when an agent runs git** (`LEADYARD_AGENT` or `CLAUDE_CODE_CHILD_SESSION`),
+    so a human's own pushes and commits are never blocked or marked.

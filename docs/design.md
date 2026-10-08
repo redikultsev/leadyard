@@ -240,7 +240,7 @@ Rules:
 | 0 | claim | the agent says "done, works" |
 | 1 | static | lint, type check, build passed; link to the log |
 | 2 | agent tests | tests written for this task pass |
-| 3 | independent check | the project's existing tests pass and were not edited in this diff; the fresh-session review has no open blocking findings |
+| 3 | independent check | the project's existing tests pass (edits of pre-existing tests accepted by a human) and a fresh-session review has no open blocking findings |
 | 4 | realistic data | old and new versions compared on real or recorded cases (§5.6) |
 | 5 | post-deploy | after deploy, the watch window passed without regressions |
 
@@ -252,17 +252,18 @@ the replay suite is level 4" (§10).
 ```json
 {
   "v": 1,
+  "type": "run",
   "id": "01J9ZK3Q8V5H2N7T4R6M0XWB1E",
   "task": "GH-142",
   "attempt": 3,
-  "check": "unit-tests",
+  "check": "tests",
   "level": 3,
   "status": "passed",
-  "artifact": "https://ci.example.com/runs/88123",
-  "commit": "4f1c2e9",
-  "tree_digest": "sha256:9a1b...",
-  "covers": {"src/api/query.go": "sha256:...", "src/api/query_test.go": "sha256:..."},
-  "snapshot": {"before": "sha256:...", "after": "sha256:..."},
+  "exit_code": 0,
+  "artifact": ".leadyard/tasks/GH-142/artifacts/01J9ZK3Q8V5H2N7T4R6M0XWB1E.log",
+  "covers": {"src/api/query.go": "<git blob id>", "src/api/query_test.go": "<git blob id>"},
+  "check_def": "9a1b2c3d4e5f6a7b",
+  "criteria": ["C1"],
   "recorded_at": "2026-10-08T14:20:11Z"
 }
 ```
@@ -272,18 +273,22 @@ Record status is one of: `passed`, `failed`, `missing`, `stale`, `invalid`, `inc
 
 Rules the CLI applies:
 
-1. **The task level is cumulative.** It is the highest level L such that every check mapped to a
-   level at or below L has its **latest** record for the current tree digest `passed`. A pass
+1. **The task level is cumulative.** It is the highest level L such that at least one check is
+   mapped to L and every check mapped to a level at or below L has its **latest** record `passed`
+   and fresh. Fresh means: the same attempt, the same check definition (`check_def`), and the same
+   covered files with the same content. The level-3 conditions below cap the level at 2 when
+   unmet. A pass
    after a fail of the same check counts only as the latest record; earlier failures in the
    attempt are shown at the verdict. An empty set is level 0.
 2. **Staleness.** A record covers a map of file paths to hashes. If any covered file changes, is
-   added, removed or renamed, the record becomes `stale`. Coverage defaults to the files of the
-   task's diff against the merge base plus the inputs the check declares; never the whole
-   repository. Digests are computed over git-tracked files and exclude `.leadyard/`, so the
-   CLI's own writes never make evidence stale.
-3. **Snapshot before and after.** The CLI hashes inputs before a run starts and again after it
-   ends. If they differ, the result is `incomplete`. A fresh hash is never attached to an old
-   success.
+   added, removed or renamed, the record becomes `stale`. Coverage is the files of the task's
+   diff against its base commit (recorded at `task new`), including untracked files, plus the
+   inputs the check declares; never the whole repository. `.leadyard/` is excluded, so the CLI's
+   own writes never make evidence stale, and a human committing the same content changes
+   nothing.
+3. **Snapshot before and after.** The CLI hashes the covered files before a run starts and again
+   after it ends. If they differ, the result is `incomplete`. A fresh hash is never attached to an
+   old success.
 4. **Attempts.** Each attempt has a number. A late result from an earlier attempt cannot raise
    the level. Starting a new attempt marks earlier records stale in one operation.
 5. **Artifact check.** Local evidence is produced by `leadyard run <check>`, which executes the
@@ -436,9 +441,10 @@ validates it against the schema. Anything else in the text is ignored for gating
 ````
 
 - `status` is `pass`, `warn` or `fail`. A missing or unparseable block is `fail`.
-- A finding `id` is computed by the CLI as a hash of the normalized file and summary, so it
-  stays stable across rounds. Ids written by the model are ignored: in a probe the reviewer
-  numbered findings `F1`, `F2`, which would not survive a second round.
+- The CLI assigns finding ids (a hash of the normalized file and summary) and ignores ids written
+  by the model: in a probe the reviewer numbered findings `F1`, `F2`, which would not survive a
+  second round. The next review bundle lists the open findings with their ids, and the reviewer
+  reports each by id. A finding the reviewer does not mention stays open.
 - A repeat review must report the state of every previous finding (`fixed`, `open`,
   `replaced`).
 - `next` comes from a closed list in the stage contract.
@@ -507,10 +513,9 @@ progress; it is not acceptance. Acceptance comes only from evidence (§5.4). In 
 there is no plan stage, it first writes a short plan: the files it intends to change and what is
 out of scope; the scope audit compares against it. Commits on the task branch only in delivery
 modes that allow it (§7.2).
-- For a fix: first a test that fails, then the change, then the same test passes. The CLI checks
-  this from its own records, without commits: a `failed` record for the test at tree digest A, a
-  later `passed` record at digest B, and the test file unchanged between A and B. A test edited
-  in between means it was adjusted to the implementation; the pair does not count.
+- For a fix: first a test that fails, then the change, then the same test passes. Both runs are
+  recorded by `leadyard run`. An automatic check of the pair (the test file unchanged between the
+  failed and the passed run) is deferred (§24).
 - The stage runs under a budget from config. At the budget checkpoint the agent stops and
   answers one question in the task file: what tool or approach would turn the remaining work
   into minutes. Any caveat in the agent's report ("done, except ...") is listed to the human as an
@@ -565,9 +570,9 @@ leadyard ships a thin own skill that follows the same discipline.
 | Stage | Default skill | Source |
 |---|---|---|
 | intake | `leadyard-intake` | own |
-| clarify | `grilling` | mattpocock |
+| clarify | `leadyard-clarify`; later `grilling` | own; mattpocock |
 | plan | `leadyard-plan` | own |
-| implement | `leadyard-implement`, following `tdd` | own + mattpocock |
+| implement | `leadyard-implement`; later following `tdd` | own; mattpocock |
 | review | `leadyard-review` | own |
 | scope audit | `leadyard-scope` | own |
 | verdict | `leadyard-verdict` | own |
@@ -818,8 +823,8 @@ Later layers override earlier ones, except that the user layer may only tighten 
 with `id` merge by `id`; other lists append; removing a distribution item is an explicit
 `disable:` entry. The config has a JSON Schema for editor hints.
 
-The config is written only by `leadyard config set`, which keeps comments and unknown keys.
-Agents never edit it as free text.
+Humans edit the config files; the gate denies agent writes to them. A `leadyard config set` that
+keeps comments is deferred (§24).
 
 ### 10.2 Example
 
@@ -833,10 +838,6 @@ checks:                      # project checks mapped to levels (§5.4)
   - {id: lint,        level: 1, run: "make lint"}
   - {id: unit-tests,  level: 3, run: "make test", covers: ["src/**", "tests/**"]}
   - {id: replay,      level: 4, run: "make replay", kind: compare}   # §5.6
-
-stages:                      # stage → skill; any skill meeting the contract
-  clarify: {skill: grilling}
-  review:  {skill: code-review}
 
 git:
   branch_pattern: "feat/{task}-{slug}"   # inferred and confirmed if absent
@@ -956,7 +957,8 @@ time waiting for a human.
    (`bypassPermissions`; on Codex it disables the sandbox). Cursor is reachable only as a
    configured ACP agent. Its sandbox is not an OS sandbox, so runs stay in a container.
 7. Tests that guard against the failure modes found in review (§25):
-   - a red-team probe: an agent told to reach `ready_to_merge` on its own must fail;
+   - (deferred with a human-only decision channel) a red-team probe: an agent told to reach
+     `ready_to_merge` on its own must fail;
    - the gate blocks with `leadyard` removed from `PATH`; gate p99 under 30 ms;
    - a rebase onto an unrelated main commit keeps evidence fresh;
    - squash merge and rebase fixtures keep records readable;
@@ -984,34 +986,34 @@ leadyard/
   reported.
 - **Overrides:** a project overrides a reference skill by placing its version under
   `.leadyard/overrides/`; updates never touch overrides.
-- **`leadyard migrate`** exists from the first release.
+- **`leadyard migrate`** arrives with the first release that changes a schema; records carry a
+  version `v` from the start.
 - **Versioning:** semver; the public API is `spec/`, stage and artifact identifiers, skill
   contracts, CLI flags. Before 1.0 the `0.y.z` rule applies and the README says so.
 - **License:** MIT.
 
-## 19. CLI surface (sketch)
+## 19. CLI surface (0.1)
 
 | Command | Does |
 |---|---|
-| `leadyard init` | install for chosen agents |
-| `leadyard doctor` | config, versions, probes; prints declared / enabled / reason |
-| `leadyard task new\|show\|list` | task folders |
+| `leadyard init` | install: config, zones, Claude Code hooks, settings and skills, git hooks |
+| `leadyard doctor` | config, hooks, settings; the wrapper blocks without the binary; gate latency |
+| `leadyard task new\|show\|list\|use` | task folders; `new` records the base commit |
 | `leadyard transition <event>` | the only way to change status |
-| `leadyard decide` | record a human decision |
-| `leadyard run <check>` | run a configured check and record its result |
-| `leadyard evidence add\|list` | record an external artifact (CI run) and list evidence |
-| `leadyard level` | current level, stale records, what is missing for the class |
-| `leadyard gate` | hook entry point; allow or deny with a reason |
-| `leadyard resume` | print task state for a new or compacted session |
-| `leadyard zones check` | zones touched by the diff and the resulting class part |
-| `leadyard compare` | noise baseline and comparison (§5.6) |
-| `leadyard pr body` | build the draft PR body from the task |
-| `leadyard config get\|set` | read and write config |
-| `leadyard lock verify` | check pinned third-party files |
-| `leadyard update\|migrate` | update and migrate installations |
-| `leadyard explain <code>` | explain a diagnostic code |
+| `leadyard decide <kind>` | record a decision (class, scope, plan, dismissed finding, accepted test edit, ...) |
+| `leadyard run <check> [--criteria C1]` | run a configured check and record the result |
+| `leadyard level` | current level, checks, criteria, open findings, what is not verified |
+| `leadyard review input\|record` | build the reviewer bundle; record its verdict block |
+| `leadyard scope` | deterministic scope audit of the final diff |
+| `leadyard zones` | zones touched by the diff and the resulting class part |
+| `leadyard resume` | task state for a new or compacted session |
+| `leadyard pr-body` | draft PR description from the evidence |
+| `leadyard config` | print the effective configuration |
+| `leadyard gate` | pre-tool hook entry point; exit 2 denies, JSON `ask` asks |
+| `leadyard githook pre-push\|commit-msg` | git hooks; act only when an agent runs git |
 
-All commands support `--json` and never prompt in `unattended` mode.
+`level`, `scope` and `task show` support `--json`. Deferred: `evidence add` (CI artifacts),
+`compare`, `config set`, `lock verify`, `update`, `migrate`, `explain`.
 
 ## 20. Build order
 
@@ -1097,9 +1099,7 @@ Everything else waits for a real case that needs it.
 
 **In 0.1**
 
-- CLI: `init`, `doctor` (static checks and a gate self-test, no live agent probes), `task
-  new|show|list`, `transition`, `decide`, `run`, `level`, `gate`, `resume`, `zones check`,
-  `pr body`, `config get|set`.
+- CLI: the commands of §19.
 - Claude Code adapter: `@AGENTS.md` import line, pre-tool hook wrapper calling `gate`,
   `SessionStart` (`compact`) calling `resume`, permission deny rules for the "never" list,
   auto mode off, auto memory off, skills in `.claude/skills/`.
@@ -1109,7 +1109,10 @@ Everything else waits for a real case that needs it.
   runner as is.
 - Risk class from zones (paths) and the five questions, confirmed by a human.
 - Own minimal skills: intake, clarify, plan, implement, review, scope audit, verdict, PR.
-- Config: user and team layers.
+- Config: user and team layers; humans edit the files.
+- Git hooks: `pre-push` (no push to protected branches, no deletion, no non-fast-forward, no
+  tags) and `commit-msg` (`Assisted-by`), both active only when an agent runs git
+  (`LEADYARD_AGENT`, set by the adapter, or Claude Code's `CLAUDE_CODE_CHILD_SESSION`).
 
 **Deferred** (each comes back when a real case needs it)
 
@@ -1124,6 +1127,8 @@ Everything else waits for a real case that needs it.
 | tech lead loop, notifications | §12 |
 | MCP surface, `migrate`, `explain`, `lock verify`, personal per-repo config layer | §19, §10 |
 | long-run registry, check cost and side-effect gating | §25 |
+| automatic red-green pair check, `config set`, stage contract files, live agent probes | §6.2, §10, §5.8, §8.3 |
+| CI artifacts as evidence (`evidence add`), level computed in CI | §5.4 |
 | zone sensitivity probes, content matchers for zones | §25 |
 | provenance files for untrusted text, verdict submitted through a tool call | §25 |
 
@@ -1162,7 +1167,26 @@ premortem, and the task shape check of §23. About 70 findings; the table groups
 | 25 | Multi-repository tasks, QA feedback and reopen | ⏸ deferred (§24) |
 | 26 | Prompt injection through tracker text, diffs and comments into trusted files | ⏸ partly covered: class confirmed by a human, review is only a condition; provenance files deferred |
 | 27 | Overengineering: MCP surface, migrate, explain, stats engine, many layers | ✅ cut from 0.1 (§24) |
-| 28 | One adapter only in 0.1 | ✗ rejected as a scope change: three certified agents stay (decision 31); 0.1 starts with Claude Code, the others follow in 0.2 |
+| 28 | One adapter only in 0.1 | ✅ accepted for 0.1 (decision 56); the three certified agents remain the target of the first build step (decision 31) |
 | 29 | Make the git host the source of truth for levels and decisions | ✗ not now: files stay authoritative in 0.1 by owner decision; revisit if forgery or branch state becomes a real problem |
 | 30 | Human cost estimate unmeasured | ✅ measured during dogfooding (§17) |
+
+**Second pass** (a fresh critic on the revised design, 2026-10-08), with what 0.1 does:
+
+| # | Finding | Decision |
+|---|---|---|
+| 31 | Rule 1 gave vacuous levels (a project with only lint reached level 5) | ✅ a level needs at least one check mapped to it (§5.4) |
+| 32 | Level-3 conditions were outside rule 1 | ✅ rule 1 applies them (§5.4) |
+| 33 | Freshness by the whole tree digest contradicted coverage by files | ✅ freshness by covered files and check definition (§5.4) |
+| 34 | Mode `none`: untracked files invisible, no merge base, level drops when the human commits | ✅ base commit recorded at `task new`; untracked files counted (§5.4) |
+| 35 | No command recorded the reviewer's verdict | ✅ `review record` (§19) |
+| 36 | The implementer wrote the reviewer's prompt | ✅ `review input` builds the bundle (§19) |
+| 37 | Finding ids drifted with reworded summaries | ✅ ids carried by the CLI; unreported findings stay open (§5.8.1) |
+| 38 | Criteria links were the agent's claim | ✅ `run --criteria` stores the link in the record; unknown criteria are refused |
+| 39 | The gate denied writing task.md, which intake needs | ✅ the gate denies only `evidence.jsonl`, `events.jsonl` and the config files (§8.2) |
+| 40 | An agent could rewrite a check through config | ✅ agent writes to config are denied; records carry `check_def` |
+| 41 | No deterministic scope audit command | ✅ `leadyard scope` |
+| 42 | `pre-push` was outside 0.1 | ✅ included; acts only for agents |
+| 43 | Red-team probe contradicts decision 54 | ⏸ deferred with a human-only channel (§17) |
+| 44 | Decisions log contradicted 0.1 (decisions 2, 32, 49) | ✅ entries 61–63 |
 
