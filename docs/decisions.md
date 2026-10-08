@@ -136,3 +136,21 @@ edited; a new entry replaces an old one and links to it. Sections refer to
     defects but is not acceptance (§5.4).
 53. **Human time budget:** about one hour a week for a single developer at six tasks; estimate
     3.5 / 10 / 17 minutes per task of class 1 / 2 / 3 (§23).
+
+## 2026-10-08 — after the design review (design §24, §25)
+
+54. **Files in the repository stay the source of truth in 0.1.** Records are tamper-evident, not
+    tamper-proof; the agent records the human's gate answers. Moving authority to the git host is
+    revisited only if forgery or branch state becomes a real problem (§25 row 29).
+55. **Simple first.** A version ships the smallest set that runs end to end; complexity is added
+    when a real case needs it (principle 9, §24).
+56. **Version 0.1 runs the developer loop end to end on Claude Code;** Codex and Cursor follow in
+    0.2 (§20, §24). Decision 31 stands.
+57. **Delivery mode `none`:** the agent edits files only; the human does all git writes. A user-level
+    config may only tighten git policy (§7.2, §10.1).
+58. **Level is cumulative over the latest record of each check;** new tests do not affect level 3,
+    edited pre-existing tests are accepted by the human (§5.4). Refines 52.
+59. **Acceptance criteria are part of the task** and shown with their evidence at the verdict
+    (§5.1, §5.7).
+60. **0.1 uses own thin skills for every stage;** the mattpocock pack integration comes later
+    because its skills do not fit the stage contracts as is (§6.3). Refines 36.

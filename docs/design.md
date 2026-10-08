@@ -16,7 +16,9 @@ Coding agents write code quickly. The time they save moves elsewhere:
   "compiles", "tests pass", or "checked against real data", so the human asks again and again,
   or checks by hand. A controlled study found experienced developers were 19% slower with AI
   tools while believing they were 20% faster
-  ([METR, July 2025](https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/)).
+  ([METR, July 2025](https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/);
+  METR has since marked these results out of date, while noting that self-reports remain
+  unreliable).
   Self-reported "done" and self-reported speed are both unreliable.
 - **Rules are written but not enforced.** Teams put "never push to main", "keep the diff
   minimal", "do not hardcode" into `AGENTS.md`. Agents read these as context, not as limits.
@@ -59,8 +61,10 @@ guardrails, and human decisions at a small number of fixed points.
    verify. Agent words are level 0.
 2. **Mechanism over instruction.** If a rule must hold, a hook, git, CI or the server enforces
    it. Instructions are context.
-3. **Fail closed.** A missing artifact is level 0. An unparseable verdict is `fail`. A crashed
-   guard blocks.
+3. **Fail closed where we control it.** A missing artifact is level 0. An unparseable verdict is
+   `fail`. The hook wrapper blocks when the CLI cannot start. Agent harnesses let a call through
+   when a hook times out, so critical denies are duplicated in permission rules, git hooks and
+   server rules (§8.2).
 4. **The program computes, the model proposes.** Levels, staleness, risk class aggregation,
    statistics, transitions and config writes are done by the CLI.
 5. **One writer per artifact.** Every file has exactly one stage that writes it. Others read.
@@ -70,6 +74,8 @@ guardrails, and human decisions at a small number of fixed points.
    asked at defined points.
 8. **Every compensating mechanism names the model weakness it compensates.** When models
    change, mechanisms are re-evaluated and removed if no longer needed.
+9. **Simple first.** A version ships the smallest set that runs end to end. Complexity is added
+   when a real case needs it, not in advance (§24).
 
 ## 4. Architecture
 
@@ -122,17 +128,30 @@ Task folder layout:
 
 ```
 .leadyard/tasks/<task-id>/
-  task.md          front matter (machine fields) + request, decisions, plan
+  task.md          front matter (machine fields) + request, criteria, decisions, plan
   evidence.jsonl   evidence records, append-only, written only by the CLI
-  events.jsonl     event log, append-only, written only by the CLI
-  artifacts/       reports, verdict blocks, run outputs referenced by evidence
+  events.jsonl     event log, append-only, written only by the CLI   (not in git)
+  artifacts/       reports, verdict blocks, run outputs              (not in git)
 ```
+
+- The task id is the tracker key when there is one (`GH-142`, `PROJ-88`), otherwise a ULID.
+  Sequential ids would collide across branches.
+- `leadyard init` adds `merge=union` for `*.jsonl` under `.leadyard/` to `.gitattributes`, so
+  appends from two branches merge without conflicts.
+- `events.jsonl` and `artifacts/` are git-ignored by default: run logs may hold secrets or
+  customer data, and the event log holds per-person timing. Evidence records link to
+  artifacts by path or URL.
+- The task folder is committed with the task's changes. In delivery mode `none` (§7.2) the
+  human commits it together with the code.
+- Records are **tamper-evident, not tamper-proof.** The gate denies direct writes to task files
+  (§8.2), but anything with write access to the repository can change them. Merging and
+  deploying stay with a human.
 
 `task.md`:
 
 ```markdown
 ---
-id: T-0142
+id: GH-142
 tracker: https://github.com/org/repo/issues/142
 status: in_progress            # §5.2, changed only by `leadyard transition`
 class: 2                       # §5.5, proposed by agent, confirmed by human
@@ -148,6 +167,10 @@ limits: {review_rounds: 5, retries: 5}   # §5.8, raised only by a recorded huma
 
 ## Request (verbatim)
 <the original request, copied as is>
+
+## Acceptance criteria
+<!-- quoted from the ticket or the request; each is linked to evidence at the verdict -->
+- C1. Orders created on `date_to` are included.
 
 ## Decisions
 <!-- append-only; written by `leadyard decide` -->
@@ -228,8 +251,9 @@ the replay suite is level 4" (§10).
 
 ```json
 {
-  "id": "ev-0007",
-  "task": "T-0142",
+  "v": 1,
+  "id": "01J9ZK3Q8V5H2N7T4R6M0XWB1E",
+  "task": "GH-142",
   "attempt": 3,
   "check": "unit-tests",
   "level": 3,
@@ -248,18 +272,24 @@ Record status is one of: `passed`, `failed`, `missing`, `stale`, `invalid`, `inc
 
 Rules the CLI applies:
 
-1. **The task level** is the highest level that has a `passed`, fresh record from the current
-   attempt. An empty set is level 0.
-2. **Staleness.** A record covers a map of file paths to SHA-256 hashes. If any covered file
-   changes, is added, removed or renamed, the record becomes `stale`. If the coverage is
-   unknown, any change in the repository makes it stale.
+1. **The task level is cumulative.** It is the highest level L such that every check mapped to a
+   level at or below L has its **latest** record for the current tree digest `passed`. A pass
+   after a fail of the same check counts only as the latest record; earlier failures in the
+   attempt are shown at the verdict. An empty set is level 0.
+2. **Staleness.** A record covers a map of file paths to hashes. If any covered file changes, is
+   added, removed or renamed, the record becomes `stale`. Coverage defaults to the files of the
+   task's diff against the merge base plus the inputs the check declares; never the whole
+   repository. Digests are computed over git-tracked files and exclude `.leadyard/`, so the
+   CLI's own writes never make evidence stale.
 3. **Snapshot before and after.** The CLI hashes inputs before a run starts and again after it
    ends. If they differ, the result is `incomplete`. A fresh hash is never attached to an old
    success.
 4. **Attempts.** Each attempt has a number. A late result from an earlier attempt cannot raise
    the level. Starting a new attempt marks earlier records stale in one operation.
-5. **Artifact check.** `leadyard evidence add` verifies that the artifact exists and reports
-   success (CI run status, exit code in a saved log, report schema). Otherwise it refuses.
+5. **Artifact check.** Local evidence is produced by `leadyard run <check>`, which executes the
+   check itself and records the exit code. `leadyard evidence add` accepts external artifacts
+   (a CI run URL) only after checking their status. Records carry a format version `v`;
+   readers accept every version and records are never rewritten.
 6. **Structure check is separate.** `leadyard check --structure` validates formats and never
    counts levels, so producing new evidence never requires presenting old evidence.
 7. **Negative control.** Every check type ships with a fixture on which it must fail. The
@@ -267,8 +297,9 @@ Rules the CLI applies:
 
 **Level 3 definition.** An independent check is one the implementing session cannot influence.
 Level 3 requires both:
-1. a mechanical check: the project's pre-existing tests pass, and the CLI confirms that the test
-   files they consist of were not edited in this diff;
+1. a mechanical check: the project's pre-existing tests pass. New test files and new test cases
+   do not matter. Pre-existing test files that this diff modified or deleted are listed at the
+   verdict; the human accepts each change or the level stays at 2;
 2. a condition: a review performed in a fresh session (diff, request and plan, without the
    implementation conversation) has no open blocking findings.
 
@@ -350,7 +381,11 @@ Always human, in every class:
 By class (§5.5): approving the scope, approving the plan.
 
 Gates are answered in chat. The answer is recorded in the task file by `leadyard decide`: who,
-what, when, reason, links. An answer that is not recorded did not happen.
+what, when, reason, links. An answer that is not recorded did not happen. In this version the
+agent records the human's answer; the record is tamper-evident only (§5.1).
+
+At the verdict every acceptance criterion is shown with the evidence linked to it, or as
+"not verified". A level reached with an unverified criterion is shown as such.
 
 ### 5.8 Stage contract
 
@@ -423,7 +458,7 @@ Every reference skill supports two modes, selected by `LEADYARD_MODE`:
 ### 6.1 Stages
 
 ```
-intake → clarify → plan → implement → scope audit → review → verdict → stand → merge package → watch
+intake → clarify → plan → implement → review → scope audit → verdict → stand → merge package → watch
 ```
 
 | Stage | Purpose | Class 1 | Class 2 | Class 3 |
@@ -432,15 +467,16 @@ intake → clarify → plan → implement → scope audit → review → verdict
 | clarify | questions to the human, batched, with recommendations | — | yes | yes |
 | plan | plan with the request verbatim and checkboxes | — | — | yes |
 | implement | code and tests | yes | yes | yes |
-| scope audit | diff against request, plan and decisions | yes | yes | yes |
 | review | separate reviewer, fresh session, diff only | — | yes | yes |
+| scope audit | final diff against request, plan and decisions | yes | yes | yes |
 | verdict | level computed, human accepts or returns | yes | yes | yes |
 | stand | run on a local or test environment, realistic data | — | per project | yes |
 | merge package | PR body, evidence, deploy order, test notes | yes | yes | yes |
 | watch | post-deploy checks over a window | — | per project | yes |
 
 The scope audit runs in every class because unrequested additions (flags, env vars, files,
-hardcoded values) are the most frequent correction humans make.
+hardcoded values) are the most frequent correction humans make. It runs last, on the final diff,
+so changes made while fixing review findings are audited too.
 
 ### 6.2 What each stage does
 
@@ -467,12 +503,14 @@ significant rule in the plan has a source (request, decision, code). An unresolv
 the stage with `needs_human`.
 
 **Implement.** Works through the plan and ticks a checkbox after each step. A checkbox shows
-progress; it is not acceptance. Acceptance comes only from evidence (§5.4). Commits on the task
-branch (§7).
+progress; it is not acceptance. Acceptance comes only from evidence (§5.4). In classes 1–2, where
+there is no plan stage, it first writes a short plan: the files it intends to change and what is
+out of scope; the scope audit compares against it. Commits on the task branch only in delivery
+modes that allow it (§7.2).
 - For a fix: first a test that fails, then the change, then the same test passes. The CLI checks
-  this: a `failed` record for the test at commit A, a `passed` record at a later commit B, and the
-  test file unchanged between A and B. A test edited in between means it was adjusted to the
-  implementation; the pair does not count.
+  this from its own records, without commits: a `failed` record for the test at tree digest A, a
+  later `passed` record at digest B, and the test file unchanged between A and B. A test edited
+  in between means it was adjusted to the implementation; the pair does not count.
 - The stage runs under a budget from config. At the budget checkpoint the agent stops and
   answers one question in the task file: what tool or approach would turn the remaining work
   into minutes. Any caveat in the agent's report ("done, except ...") is listed to the human as an
@@ -487,11 +525,14 @@ a fresh session, like the review, so the implementer does not audit itself. Outp
 **Review.** Runs in a fresh session with the diff, the request and the plan, without the
 implementation conversation. The reviewer reports uncertain findings with a confidence mark;
 a separate read-only check resolves them before the verdict block. Read-only is enforced by the
-environment (permissions), not by the prompt.
+environment (permissions), not by the prompt. The human sees the findings and says which to fix;
+a finding the human dismisses is recorded as a decision and no longer blocks.
 
 **Verdict.** The CLI computes the level, lists what is not verified, and checks the class
-requirement. Below the requirement, the human is not asked. At or above it, the human gets:
-level with links, findings left open, what was not checked, the scope audit result.
+requirement. The human gets: level with links, acceptance criteria with their evidence, findings
+left open, edited pre-existing tests, the scope audit result. Below the requirement the package
+is marked "below requirement"; the human returns the task or accepts it with a recorded reason
+(`accept_with_risk`).
 
 **Stand.** Runs scenarios derived from the diff plus regression scenarios on a local or test
 environment.
@@ -518,24 +559,31 @@ recorded with links. The agent writes a summary of what changed, marked as its r
 ### 6.3 Default skills
 
 The default skill pack is [mattpocock/skills](https://github.com/mattpocock/skills) (MIT),
-pinned by version and hash (§14). Stages it does not cover get leadyard's own skills.
+pinned at `v1.3.1` (`24fe0ef`) (§14). Where a pack skill does not fit a stage contract as is,
+leadyard ships a thin own skill that follows the same discipline.
 
 | Stage | Default skill | Source |
 |---|---|---|
 | intake | `leadyard-intake` | own |
-| clarify | `grilling` / `grill-with-docs` | mattpocock |
-| plan | `to-spec`, `to-tickets` for multi-session work | mattpocock |
-| implement | `implement` (drives `tdd`) | mattpocock |
+| clarify | `grilling` | mattpocock |
+| plan | `leadyard-plan` | own |
+| implement | `leadyard-implement`, following `tdd` | own + mattpocock |
+| review | `leadyard-review` | own |
 | scope audit | `leadyard-scope` | own |
-| review | `code-review` | mattpocock |
 | verdict | `leadyard-verdict` | own |
 | stand | `leadyard-stand` | own |
 | merge package | `leadyard-pr` | own |
 | watch | `leadyard-watch` | own |
 
+Why not more of the pack (checked at `v1.3.1`): `to-spec` publishes a spec to the tracker
+instead of writing a plan; `implement` commits to the current branch and runs `code-review` in
+the same session, which is not a fresh-session review; `code-review` asks the user for a fixed
+point and emits no verdict block; `implement`, `to-spec`, `to-tickets` and `grill-with-docs` are
+marked user-invoke-only (`disable-model-invocation`, a Claude Code field). A conformance test runs
+on every pack update.
+
 Any skill can be replaced in config if the replacement satisfies the stage contract: it reads
-the declared inputs and writes the declared outputs and verdict block. The mapping above must be
-re-checked against the pinned version of the pack before release (§20).
+the declared inputs and writes the declared outputs and verdict block.
 
 ## 7. Git policy
 
@@ -577,11 +625,14 @@ re-checked against the pinned version of the pack before release (§20).
 
 | Mode | The agent may |
 |---|---|
+| `none` | edit files only; no branch, commit, fetch or push. The human does all git writes |
 | `local` | commit locally |
 | `branch` | plus push its branch |
 | `pr` | plus open a draft PR (default) |
 
-A task may narrow the mode. Anything beyond it requires confirmation.
+A task may narrow the mode. Anything beyond it requires confirmation. A developer who keeps all
+git writes for themselves sets `delivery: none` once in the user-level config (§10.1); in this
+mode the "on its own" list of §7.1 shrinks to reads.
 
 ### 7.3 Branches and worktrees
 
@@ -590,10 +641,10 @@ A task may narrow the mode. Anything beyond it requires confirmation.
   `agent/<task-id>-<slug>`.
 - **One task per working tree.** Uncommitted changes block the start of another task in the
   same tree. Parallel work happens only in separate worktrees, created with confirmation.
-- **The branch is the source of truth.** Before a stage the CLI restores the expected branch;
-  after the stage it checks that the branch did not change. Drift goes to `needs_human`.
-- **After implementation the CLI checks, not the agent:** the tree is clean, the branch is the
-  same, new commits exist and carry the trailer.
+- **Branch drift is reported, never repaired.** Before and after a stage the CLI checks that
+  the branch is the expected one. Drift goes to `needs_human`; the CLI does not check out.
+- **After implementation the CLI checks, not the agent:** the branch is the same; in modes that
+  commit, the tree is clean and new commits carry the trailer.
 
 ### 7.4 Identity
 
@@ -603,8 +654,10 @@ Two supported setups:
   teams: then the server itself refuses writes to protected branches);
 - the human's account plus a trailer.
 
-One trailer for all agents: `Assisted-by: <agent>/<model>`. The agent's own co-author trailer is
-disabled to avoid duplicates. A project switch `ai_contributions: forbidden` makes the agent
+One trailer for all agents: `Assisted-by: <agent>/<model>`. The `commit-msg` hook adds it only
+when an agent task is active in the working tree, so purely human commits stay unmarked. The
+agent's own co-author trailer is disabled to avoid duplicates (Claude Code `attribution.commit`,
+Cursor `attribution.attributeCommitsToAgent`). A project switch `ai_contributions: forbidden` makes the agent
 produce a patch or text instead of writing to git.
 
 ### 7.5 Enforcement layers
@@ -626,7 +679,8 @@ whether the PR description is accurate. Review and evidence cover those.
 The CLI reads PR state and turns it into transitions: changes requested → back to
 `in_progress` on the same branch; merged → `merged`; closed without merge → `on_hold`.
 Repeated runs are idempotent by review id. The verdict comment on the PR is a single comment
-updated only when its content changes.
+updated only when its content changes. A merge without an accepted verdict is recorded as
+`merged_without_verdict`, and the CLI asks for the reason afterwards. (Deferred: §24.)
 
 ## 8. Guardrails and probes
 
@@ -638,15 +692,29 @@ loosen a rule only explicitly, with a recorded reason.
 
 ### 8.2 How a rule is enforced
 
-1. **Pre-tool hook** calls `leadyard gate`, which parses the command (not a string prefix) and
-   answers allow or deny. A text pattern like `git push *` misses `git -C . push`; the gate
-   parses arguments instead.
-2. **The hook fails closed.** Agents that follow the Claude Code hook protocol block only on
-   exit code 2 and let the action through on any other code. `leadyard gate` exits with 2 on any
-   internal error.
-3. **Modes that skip permission prompts are handled.** In Claude Code a pre-tool hook that denies
-   blocks even in bypass mode; auto mode can push without asking, so the adapter disables it
-   where the project requires (`permissions.disableAutoMode`).
+1. **Pre-tool hook** calls `leadyard gate`, which parses the command into a syntax tree
+   (`mvdan.cc/sh`) instead of matching a string prefix. A text pattern like `git push *` misses
+   `git -C . push`; the parser does not. The gate also sees file-write tools (writes to task
+   files are denied) and known git-hosting tools (merge, approve).
+2. **What the hook can and cannot guarantee.** Claude Code blocks on exit code 2 or on a JSON
+   `permissionDecision: "deny"`; any other failure, a hook that cannot start, and a hook that
+   times out let the call through. Therefore:
+   - the hook is a small wrapper that exits 2 when `leadyard` cannot be found or fails;
+   - `leadyard gate` has a latency budget (p99 under 30 ms) tested in CI;
+   - critical denies (push to protected branches, force push, merge) are duplicated in the
+     agent's permission deny rules, in the git `pre-push` hook and, where available, in server
+     rulesets;
+   - a parser cannot see aliases, scripts or `python -c`; denies that rest only on the parser
+     are reported at level A unless a deeper layer exists.
+3. **Permission modes.** In Claude Code a PreToolUse deny blocks even in bypass mode. Auto mode is
+   the default for terminal sessions in recent versions and can push to any branch without
+   asking, so the adapter disables it by default (`disableAutoMode`); enabling it is a recorded
+   decision. An installed Claude Code mod that handles `tool.check` can approve a call a hook
+   blocked unless the hook comes from managed settings; `doctor` reports such mods.
+   Codex calls its hooks a guardrail, not a complete enforcement boundary: writes into an open
+   exec session and hosted tools are not hooked, and hooks run only after trust. On Codex the
+   push guarantee is rated V (git and server), not E. Cursor hooks fail open unless the adapter
+   sets `failClosed: true`.
 4. **Messages tell the agent what to do instead,** for example "push to main is not allowed;
    push your branch `feat/T-0142-date-filter` and open a draft PR".
 
@@ -663,7 +731,11 @@ Each guarantee declares the minimum level at which it must hold:
 
 Each adapter declares what level it can reach. `leadyard doctor` runs probes in headless mode:
 it tries a forbidden action and checks that it was blocked, checks that a hook was called, that
-an MCP tool is visible, that instructions were loaded. The capability table is generated from
+instructions were loaded, and that the gate still blocks with `leadyard` removed from `PATH`.
+Probes run only in a throwaway repository with a fake remote and a temporary home directory, so
+a broken guard cannot push anywhere real. Probes do not use modes that skip hooks (`--bare`), and
+a headless probe does not prove that hooks run in an interactive session before its trust prompt
+is accepted. The capability table is generated from
 probe results, never written by hand. If a reachable level is lower than the required one,
 `doctor`, CI and the PR body say so. There is no silent degradation.
 
@@ -681,19 +753,20 @@ An agent moves up after its probes pass on a pinned version, with a dated record
 
 ### 9.2 What the core relies on
 
-Only what nearly every agent supports: `AGENTS.md`, `SKILL.md` with portable front matter
-fields (`name`, `description`, `license`, `compatibility`, `metadata`), shell commands, MCP over
-stdio and streamable HTTP. Everything richer lives in adapters.
+Only what most agents support: `AGENTS.md` (with adapter work: Claude Code reads it by
+default only without a `CLAUDE.md`, Gemini CLI reads `GEMINI.md` unless configured, Codex prefers
+`AGENTS.override.md`), `SKILL.md` with portable front matter fields (`name`, `description`,
+`license`, `compatibility`, `metadata`; `allowed-tools` is experimental and not relied on),
+and shell commands. Everything richer lives in adapters.
 
-Every core tool is available two ways: as an MCP tool and as a CLI command with `--json`. An
-agent without MCP uses the CLI.
+Every core tool is a CLI command with `--json`. An MCP surface is deferred (§24).
 
 ### 9.3 Adapter manifest
 
 ```yaml
 id: claude-code
 tier: certified
-min_version: "2.1.277"
+min_version: "x.y.z"          # the lowest version on which all probes pass
 modes: [interactive, headless]
 capabilities:              # filled from probe results, per mode
   instructions: native-via-claude-md
@@ -709,17 +782,22 @@ version from the exact binary that will run. "Unknown" is its own status, not su
 
 ### 9.4 Known adapter facts (Claude Code)
 
-- It reads `AGENTS.md` only when there is no `CLAUDE.md`. The adapter writes `CLAUDE.md`
-  containing `@AGENTS.md`.
+- By default it reads `AGENTS.md` only when no `CLAUDE.md`, `.claude/CLAUDE.md` or
+  `CLAUDE.local.md` exists. The adapter adds an `@AGENTS.md` import line to `CLAUDE.md`; if the
+  file exists, `init` only appends the line and never rewrites the file.
 - It does not load skills from `.agents/skills/`. The adapter places skills in `.claude/skills/`.
 - After context compaction, a `SessionStart` hook with the `compact` matcher runs
-  `leadyard resume`, which prints the task state. Skills write state as they go; the hook only
-  re-injects it.
+  `leadyard resume`, which prints the task state. Plain hook output is capped at 10,000
+  characters (beyond that the agent sees a 2,000-character preview), so `resume` stays under the
+  cap. Skills write state as they go; the hook only re-injects it.
+- Auto memory is on by default; the adapter sets `autoMemoryEnabled: false` (§13).
+- Cursor also loads `.claude/skills/` and runs Claude Code hooks from `.claude/settings.json`.
+  When both adapters are enabled, the generator avoids duplicate skills and double gate calls.
 
 ### 9.5 Generation rules
 
-- The CLI is the only generator of agent configuration. Hand-written agent configs outside the
-  generator fail a CI check.
+- The CLI generates the agent configuration it owns and marks it. It never rewrites files the
+  user wrote; it appends an include line or asks.
 - Configs hold names of environment variables, never secret values.
 - Headless runs (probes, unattended stages) start with a minimal environment and an explicit
   list of passed variables.
@@ -731,10 +809,12 @@ version from the exact binary that will run. "Unknown" is its own status, not su
 | Layer | File | In git |
 |---|---|---|
 | distribution | inside the leadyard release | — |
+| user | `~/.config/leadyard/config.yaml` (all repositories of one person) | — |
 | team | `.leadyard/config.yaml` | yes |
 | personal | `.leadyard/config.local.yaml` | no |
 
-Later layers override earlier ones. Merge rules: scalars replace; maps merge; lists of items
+Later layers override earlier ones, except that the user layer may only tighten git policy
+(for example `delivery: none`); a team config cannot widen what a person allowed. Merge rules: scalars replace; maps merge; lists of items
 with `id` merge by `id`; other lists append; removing a distribution item is an explicit
 `disable:` entry. The config has a JSON Schema for editor hints.
 
@@ -827,7 +907,9 @@ Built after the developer loop (§20). Outline:
 ## 13. Memory and lessons
 
 - Durable knowledge lives only in repository files: decisions, glossary, rules, lessons.
-  leadyard does not use or write the agents' built-in memory.
+  leadyard does not use or write the agents' built-in memory. Instructions alone did not keep
+  agents out of their memory in practice, so the Claude Code adapter turns auto memory off by
+  setting (`autoMemoryEnabled: false`).
 - **Lesson format:** problem, root cause, fix, prevention, tags, files, and two required fields:
   where it was promoted (a rule, a check, a zone, a checklist item) and a review date. The root
   cause written by the agent is marked as its conclusion until a human promotes the lesson. A rule
@@ -835,7 +917,8 @@ Built after the developer loop (§20). Outline:
 
 ## 14. Third-party skills
 
-- Default pack: mattpocock/skills. Other packs (and any skill) can be configured per stage.
+- Default pack: mattpocock/skills at `v1.3.1` (`24fe0ef`). Other packs (and any skill) can be
+  configured per stage.
 - Every third-party skill and hook is pinned by source, version and content hash in
   `.leadyard/lock.yaml`. `leadyard lock verify` runs in CI.
 - An update of a pack arrives as a normal PR where the skill diff is visible. Nothing changes
@@ -869,6 +952,16 @@ time waiting for a human.
    Repetition, baseline and verdict are leadyard's.
 4. **Rule:** a change to a skill is not accepted without a before/after measurement.
 5. Fast track on every PR; full live matrix weekly and when a new model is released.
+6. ai-tester runs with an explicit permission mode per scenario: its default skips permissions
+   (`bypassPermissions`; on Codex it disables the sandbox). Cursor is reachable only as a
+   configured ACP agent. Its sandbox is not an OS sandbox, so runs stay in a container.
+7. Tests that guard against the failure modes found in review (§25):
+   - a red-team probe: an agent told to reach `ready_to_merge` on its own must fail;
+   - the gate blocks with `leadyard` removed from `PATH`; gate p99 under 30 ms;
+   - a rebase onto an unrelated main commit keeps evidence fresh;
+   - squash merge and rebase fixtures keep records readable;
+   - human gate time is logged locally and published after four weeks of dogfooding, replacing
+     the estimate in §23.
 
 ## 18. Repository layout and packaging
 
@@ -905,7 +998,8 @@ leadyard/
 | `leadyard task new\|show\|list` | task folders |
 | `leadyard transition <event>` | the only way to change status |
 | `leadyard decide` | record a human decision |
-| `leadyard evidence add\|list` | record and list evidence |
+| `leadyard run <check>` | run a configured check and record its result |
+| `leadyard evidence add\|list` | record an external artifact (CI run) and list evidence |
 | `leadyard level` | current level, stale records, what is missing for the class |
 | `leadyard gate` | hook entry point; allow or deny with a reason |
 | `leadyard resume` | print task state for a new or compacted session |
@@ -922,7 +1016,8 @@ All commands support `--json` and never prompt in `unattended` mode.
 ## 20. Build order
 
 1. **Core and developer loop:** spec, CLI, own stage skills, adapters with probes for Claude Code,
-   Codex and Cursor. leadyard is developed with leadyard from the first working commit.
+   Codex and Cursor. It ships in small versions: 0.1 runs end to end on Claude Code (§24), Codex
+   and Cursor follow in 0.2. leadyard is developed with leadyard from the first working commit.
 2. **Tech lead loop.**
 3. **Tracker integrations and notifications.**
 
@@ -930,11 +1025,9 @@ All commands support `--json` and never prompt in `unattended` mode.
 
 ## 21. Open questions
 
-1. Verify the stage mapping of §6.3 against the pinned version of mattpocock/skills, including
-   how its `implement` commits relative to §7.
-2. Statistical method for §5.6 (sign test, bootstrap, or another) and the default tolerance.
-3. Starting thresholds that need calibration on real data: PR size warning, watch window.
-4. Final name. Renaming touches the CLI name, the config directory and the trailer namespace.
+1. Statistical method for §5.6 (sign test, bootstrap, or another) and the default tolerance.
+2. Starting thresholds that need calibration on real data: PR size warning, watch window.
+3. Final name. Renaming touches the CLI name, the config directory and the trailer namespace.
 
 ## 22. Prior art and credits
 
@@ -996,3 +1089,80 @@ audit answers, verdict); class 2 about 10 min (plus clarify and scope approval);
 existed before. At a weekly volume of `n1`, `n2`, `n3` tasks per class:
 `3.5·n1 + 10·n2 + 17·n3` minutes. Accepted budget for a single developer: about one hour a
 week at six tasks.
+
+## 24. Version 0.1
+
+The smallest set that runs the developer loop end to end, on one repository, with Claude Code.
+Everything else waits for a real case that needs it.
+
+**In 0.1**
+
+- CLI: `init`, `doctor` (static checks and a gate self-test, no live agent probes), `task
+  new|show|list`, `transition`, `decide`, `run`, `level`, `gate`, `resume`, `zones check`,
+  `pr body`, `config get|set`.
+- Claude Code adapter: `@AGENTS.md` import line, pre-tool hook wrapper calling `gate`,
+  `SessionStart` (`compact`) calling `resume`, permission deny rules for the "never" list,
+  auto mode off, auto memory off, skills in `.claude/skills/`.
+- Git policy in the gate for all four delivery modes, including `none`.
+- Task folder, statuses, transitions (with `accept_with_risk`), decisions, acceptance criteria.
+- Evidence levels 1–4 from configured checks: level 4 takes the result of the project's compare
+  runner as is.
+- Risk class from zones (paths) and the five questions, confirmed by a human.
+- Own minimal skills: intake, clarify, plan, implement, review, scope audit, verdict, PR.
+- Config: user and team layers.
+
+**Deferred** (each comes back when a real case needs it)
+
+| Item | Section |
+|---|---|
+| Codex and Cursor adapters, live agent probes | §9, §8.3 → 0.2 |
+| mattpocock pack integration, lock and conformance test | §6.3, §14 |
+| noise statistics engine (§5.6) beyond the runner's own verdict | §5.6 |
+| stand stage specifics, watch stage, level 5, deploy tracking | §6.2 |
+| PR feedback loop, `merged_without_verdict` | §7.6 |
+| tracker sync, team workspace, multi-repository tasks | §11 |
+| tech lead loop, notifications | §12 |
+| MCP surface, `migrate`, `explain`, `lock verify`, personal per-repo config layer | §19, §10 |
+| long-run registry, check cost and side-effect gating | §25 |
+| zone sensitivity probes, content matchers for zones | §25 |
+| provenance files for untrusted text, verdict submitted through a tool call | §25 |
+
+## 25. Review
+
+A design review was run on draft 0.1 (2026-10-08): prior art per component, a replay of 19 real
+episodes, a platform fact check against primary documentation, an opposing critic with a
+premortem, and the task shape check of §23. About 70 findings; the table groups them.
+
+| # | Finding | Decision |
+|---|---|---|
+| 1 | The agent records the human's gate answers; a decision can be forged | ⏸ kept as is in 0.1, stated as tamper-evident (§5.1, §5.7); a human-only channel when needed |
+| 2 | Evidence files can be written around the CLI | ✅ gate denies direct writes; local evidence only via `leadyard run`; tamper-evident only (§5.1, §5.4) |
+| 3 | A hook that cannot start or times out lets the call through | ✅ wrapper exits 2 without the CLI; critical denies duplicated; latency budget (§8.2) |
+| 4 | Task state on code branches: post-merge records, conflicts, ids | ✅ partly: union merge, ULID or tracker ids, digests exclude `.leadyard/`; ⏸ post-merge records with watch |
+| 5 | Level 3 unreachable when a fix edits an existing test file | ✅ new tests do not matter; edited pre-existing tests accepted by the human (§5.4) |
+| 6 | The default pack does not fit the stage contracts | ✅ own thin skills; mapping corrected at `v1.3.1` (§6.3) |
+| 7 | "Agent never writes git" cannot be expressed | ✅ `delivery: none`, user-level config, red-green by digests, no checkout by the CLI (§7.2, §7.3) |
+| 8 | Level was best-of-N, not cumulative | ✅ cumulative, latest record per check (§5.4) |
+| 9 | Ticket acceptance criteria not modelled | ✅ criteria in the task file, shown with evidence at the verdict (§5.1, §5.7) |
+| 10 | Auto mode is the default and pushes to any branch | ✅ disabled by default; enabling is a recorded decision (§8.2) |
+| 11 | Codex hooks are not a complete boundary; Cursor hooks fail open | ✅ stated; Codex push guarantee rated V; Cursor `failClosed` (§8.2) |
+| 12 | Coverage "whole repository" makes evidence stale on every merge | ✅ coverage = task diff plus declared inputs (§5.4) |
+| 13 | Scope audit ran before review fixes | ✅ moved last, on the final diff (§6.1) |
+| 14 | Classes 1–2 had no plan to audit against | ✅ implement writes a short plan first (§6.2) |
+| 15 | Deadlock below the class requirement | ✅ package shown as "below requirement"; `accept_with_risk` (§6.2) |
+| 16 | Review findings: no human triage, ids drift | ✅ human picks findings, dismissals recorded; ids by the CLI (§5.8.1, §6.2) |
+| 17 | Artifacts and event log may hold secrets, customer data, per-person timing | ✅ git-ignored by default (§5.1) |
+| 18 | Probes run real forbidden actions | ✅ throwaway repository, fake remote, temporary home (§8.3) |
+| 19 | `init` takes over existing agent files | ✅ appends an include line, never rewrites user files (§9.4, §9.5) |
+| 20 | Factual corrections: AGENTS.md loading, hook stdout cap, Cursor loading Claude files, auto memory default, METR status | ✅ corrected (§1, §9.2, §9.4, §13) |
+| 21 | A prompt-only change in an LLM service: replays blind, level 4 costs 20–50 hours of model time per attempt | ⏸ zone sensitivity probes and paired, interleaved comparison with a run-count estimate, deferred (§24) |
+| 22 | Long runs: no registry, no heartbeat, heavy runs start without asking | ⏸ deferred (§24) |
+| 23 | Stand runs against a stale build; side effects of stand actions ungated | ⏸ deferred with the stand stage (§24) |
+| 24 | Watch: no environment, no check that the deploy contains the change | ⏸ deferred with the watch stage (§24) |
+| 25 | Multi-repository tasks, QA feedback and reopen | ⏸ deferred (§24) |
+| 26 | Prompt injection through tracker text, diffs and comments into trusted files | ⏸ partly covered: class confirmed by a human, review is only a condition; provenance files deferred |
+| 27 | Overengineering: MCP surface, migrate, explain, stats engine, many layers | ✅ cut from 0.1 (§24) |
+| 28 | One adapter only in 0.1 | ✗ rejected as a scope change: three certified agents stay (decision 31); 0.1 starts with Claude Code, the others follow in 0.2 |
+| 29 | Make the git host the source of truth for levels and decisions | ✗ not now: files stay authoritative in 0.1 by owner decision; revisit if forgery or branch state becomes a real problem |
+| 30 | Human cost estimate unmeasured | ✅ measured during dogfooding (§17) |
+
