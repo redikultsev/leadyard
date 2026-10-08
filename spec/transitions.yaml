@@ -1,0 +1,27 @@
+# Task transitions (design §5.3). The only way to change a task's status is
+# `leadyard transition <event>`. A project may tighten this table, never loosen it
+# silently. actor: who triggers the event; requires: what must hold.
+schema_version: 1
+transitions:
+  - {event: start,            from: [new],                                   actor: agent, to: clarifying}
+  - {event: plan,             from: [clarifying],                            actor: agent, to: planning}
+  - {event: implement,        from: [clarifying, planning],                  actor: agent, to: in_progress,
+     requires: {class_confirmed: true, scope_approved_for_class: 2, plan_approved_for_class: 3}}
+  - {event: verify,           from: [in_progress],                           actor: agent, to: verifying}
+  - {event: ask_human,        from: [clarifying, planning, in_progress, verifying], actor: agent, to: waiting_human,
+     requires: {reason: true}}
+  - {event: continue,         from: [waiting_human],                         actor: human, to: in_progress}
+  - {event: approve_verdict,  from: [verifying, waiting_human],              actor: human, to: ready_to_merge,
+     requires: {level_meets_class: true}}
+  - {event: accept_with_risk, from: [verifying, waiting_human],              actor: human, to: ready_to_merge,
+     requires: {reason: true}}
+  - {event: request_changes,  from: [verifying, waiting_human, ready_to_merge, merged, deployed], actor: human, to: in_progress,
+     requires: {reason: true}, effects: [new_attempt]}
+  - {event: merged,           from: [ready_to_merge],                        actor: human, to: merged}
+  - {event: deployed,         from: [merged],                                actor: human, to: deployed}
+  - {event: close,            from: [merged, deployed],                      actor: human, to: closed}
+  - {event: hold,             from: [new, clarifying, planning, in_progress, verifying, waiting_human, ready_to_merge],
+     actor: human, to: on_hold, requires: {reason: true}}
+  - {event: unhold,           from: [on_hold],                               actor: human, to: in_progress}
+  - {event: cancel,           from: [new, clarifying, planning, in_progress, verifying, waiting_human, ready_to_merge, on_hold],
+     actor: human, to: cancelled, requires: {reason: true}}
