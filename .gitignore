@@ -1,0 +1,5 @@
+# leadyard
+.leadyard/current
+.leadyard/tasks/*/events.jsonl
+.leadyard/tasks/*/artifacts/
+.leadyard/config.local.yaml

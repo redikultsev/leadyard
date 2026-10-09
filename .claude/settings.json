@@ -1,0 +1,47 @@
+{
+  "attribution": {
+    "commit": ""
+  },
+  "autoMemoryEnabled": false,
+  "disableAutoMode": "disable",
+  "env": {
+    "LEADYARD_AGENT": "claude-code"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/leadyard-gate.sh",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|EnterWorktree|mcp__.*"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/leadyard-resume.sh",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume|compact"
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push * main)",
+      "Bash(git push * master)",
+      "Bash(gh pr merge *)",
+      "Edit(./.leadyard/config.yaml)",
+      "Edit(./.leadyard/zones.yaml)"
+    ]
+  }
+}

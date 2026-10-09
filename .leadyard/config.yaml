@@ -1,0 +1,17 @@
+# leadyard configuration for leadyard itself (design §10). The agent never edits this file.
+schema_version: 1
+agents: [claude-code]
+
+git:
+  # Decision 46: the assistant commits in this repository; push stays with the owner.
+  delivery: local
+  base: main
+  protected_branches: [main, "release/*"]
+  protected_paths: [".github/workflows/**", LICENSE]
+
+checks:
+  - {id: fmt,   level: 1, run: 'test -z "$(gofmt -l .)"'}
+  - {id: vet,   level: 1, run: "go vet ./..."}
+  - {id: tests, level: 3, run: "go test ./...", tests: ["**/*_test.go"]}
+
+class_levels: {1: 1, 2: 3, 3: 4}

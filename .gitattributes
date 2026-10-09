@@ -1,0 +1,2 @@
+# leadyard
+.leadyard/**/*.jsonl merge=union

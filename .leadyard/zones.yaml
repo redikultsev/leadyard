@@ -1,0 +1,10 @@
+# Areas where a change is sensitive (design §5.5).
+zones:
+  - id: gate
+    class: 3
+    why: "the gate decides what an agent may do in git; a mistake lets an agent push or merge"
+    paths: ["internal/gate/**", "internal/initcmd/**", "internal/cli/hooks.go"]
+  - id: evidence
+    class: 2
+    why: "level computation and the ledger decide what counts as done"
+    paths: ["internal/level/**", "internal/ledger/**", "internal/review/**", "spec/**"]
