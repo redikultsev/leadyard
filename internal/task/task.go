@@ -14,7 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/zireaelq/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/ledger"
 )
 
 // Statuses fixed in the core (design §5.2).

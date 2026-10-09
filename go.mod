@@ -1,4 +1,4 @@
-module github.com/zireaelq/leadyard
+module github.com/redikultsev/leadyard
 
 go 1.26.0
 

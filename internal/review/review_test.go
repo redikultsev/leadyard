@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zireaelq/leadyard/internal/ledger"
-	"github.com/zireaelq/leadyard/internal/task"
-	"github.com/zireaelq/leadyard/internal/testutil"
+	"github.com/redikultsev/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/testutil"
 )
 
 const reply = "Looks wrong.\n```leadyard-verdict\n{\"schema\":1,\"stage\":\"review\",\"status\":\"fail\",\"findings\":[{\"id\":\"F1\",\"severity\":\"blocking\",\"file\":\"a.go\",\"line\":3,\"summary\":\"date_to exclusive\"}]}\n```\n"

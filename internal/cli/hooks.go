@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zireaelq/leadyard/internal/config"
-	"github.com/zireaelq/leadyard/internal/gate"
-	"github.com/zireaelq/leadyard/internal/repo"
-	"github.com/zireaelq/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/gate"
+	"github.com/redikultsev/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/task"
 )
 
 // policyFor builds the gate policy for the repository containing dir.

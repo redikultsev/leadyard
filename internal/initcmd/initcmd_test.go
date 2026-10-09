@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zireaelq/leadyard/internal/testutil"
+	"github.com/redikultsev/leadyard/internal/testutil"
 )
 
 func TestInitIsIdempotentAndKeepsUserFiles(t *testing.T) {

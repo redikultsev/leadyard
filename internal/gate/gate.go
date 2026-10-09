@@ -11,8 +11,8 @@ import (
 
 	"mvdan.cc/sh/v3/syntax"
 
-	"github.com/zireaelq/leadyard/internal/config"
-	"github.com/zireaelq/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/repo"
 )
 
 // Verdicts.

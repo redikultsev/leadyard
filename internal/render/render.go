@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zireaelq/leadyard/internal/ledger"
-	"github.com/zireaelq/leadyard/internal/level"
-	"github.com/zireaelq/leadyard/internal/task"
-	"github.com/zireaelq/leadyard/internal/transition"
+	"github.com/redikultsev/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/level"
+	"github.com/redikultsev/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/transition"
 )
 
 // MaxResume keeps the resume block under the agent's hook output cap

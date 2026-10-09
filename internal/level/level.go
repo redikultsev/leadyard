@@ -10,10 +10,10 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/zireaelq/leadyard/internal/config"
-	"github.com/zireaelq/leadyard/internal/ledger"
-	"github.com/zireaelq/leadyard/internal/repo"
-	"github.com/zireaelq/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/task"
 )
 
 // Check states shown to people.

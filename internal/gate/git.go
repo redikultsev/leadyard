@@ -3,8 +3,8 @@ package gate
 import (
 	"strings"
 
-	"github.com/zireaelq/leadyard/internal/config"
-	"github.com/zireaelq/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/repo"
 )
 
 var gitRead = map[string]bool{"status": true, "diff": true, "log": true, "show": true, "blame": true,

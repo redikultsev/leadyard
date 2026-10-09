@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"github.com/zireaelq/leadyard/internal/cli"
+	"github.com/redikultsev/leadyard/internal/cli"
 )
 
 func main() {

@@ -15,15 +15,15 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/zireaelq/leadyard/internal/config"
-	"github.com/zireaelq/leadyard/internal/initcmd"
-	"github.com/zireaelq/leadyard/internal/ledger"
-	"github.com/zireaelq/leadyard/internal/level"
-	"github.com/zireaelq/leadyard/internal/render"
-	"github.com/zireaelq/leadyard/internal/repo"
-	"github.com/zireaelq/leadyard/internal/review"
-	"github.com/zireaelq/leadyard/internal/task"
-	"github.com/zireaelq/leadyard/internal/transition"
+	"github.com/redikultsev/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/initcmd"
+	"github.com/redikultsev/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/level"
+	"github.com/redikultsev/leadyard/internal/render"
+	"github.com/redikultsev/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/review"
+	"github.com/redikultsev/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/transition"
 )
 
 func cmdInit(e *env, args []string) error {

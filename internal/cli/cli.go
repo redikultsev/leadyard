@@ -10,11 +10,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zireaelq/leadyard/internal/config"
-	"github.com/zireaelq/leadyard/internal/ledger"
-	"github.com/zireaelq/leadyard/internal/level"
-	"github.com/zireaelq/leadyard/internal/repo"
-	"github.com/zireaelq/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/level"
+	"github.com/redikultsev/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/task"
 )
 
 // Version is set at build time.

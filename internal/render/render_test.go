@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zireaelq/leadyard/internal/level"
-	"github.com/zireaelq/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/level"
+	"github.com/redikultsev/leadyard/internal/task"
 )
 
 func TestResumeCapsAndShowsNext(t *testing.T) {

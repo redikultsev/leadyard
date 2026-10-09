@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	. "github.com/zireaelq/leadyard/internal/repo"
-	"github.com/zireaelq/leadyard/internal/testutil"
+	. "github.com/redikultsev/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/testutil"
 )
 
 func TestMatch(t *testing.T) {

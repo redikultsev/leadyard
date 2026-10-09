@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zireaelq/leadyard/internal/testutil"
+	"github.com/redikultsev/leadyard/internal/testutil"
 )
 
 // run executes a leadyard command in dir and returns stdout, stderr and the code.

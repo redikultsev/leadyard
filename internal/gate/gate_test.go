@@ -3,7 +3,7 @@ package gate
 import (
 	"testing"
 
-	"github.com/zireaelq/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/config"
 )
 
 func pol(delivery, branch string) Policy {

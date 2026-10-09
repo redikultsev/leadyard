@@ -19,7 +19,7 @@ Design: [docs/design.md](docs/design.md) · decisions: [docs/decisions.md](docs/
 Requires git and Go 1.26 (Go 1.21 or newer downloads the right toolchain by itself).
 
 ```bash
-go install github.com/zireaelq/leadyard/cmd/leadyard@latest
+go install github.com/redikultsev/leadyard/cmd/leadyard@latest
 ```
 
 From a clone: `go install ./cmd/leadyard`. Make sure `$(go env GOPATH)/bin` is on your `PATH`:

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zireaelq/leadyard/internal/ledger"
-	"github.com/zireaelq/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/task"
 )
 
 func newTask(t *testing.T, class int) *task.Task {

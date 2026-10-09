@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zireaelq/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/repo"
 )
 
 // NewRepo creates a git repository with one commit on main containing files.

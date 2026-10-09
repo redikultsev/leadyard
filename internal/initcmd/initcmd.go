@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zireaelq/leadyard/internal/config"
-	"github.com/zireaelq/leadyard/internal/repo"
-	"github.com/zireaelq/leadyard/skills"
+	"github.com/redikultsev/leadyard/internal/config"
+	"github.com/redikultsev/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/skills"
 )
 
 // Report lists what init did.
@@ -305,19 +305,31 @@ func containsStr(l []string, s string) bool {
 // The wrappers fail closed: without the CLI every guarded call is blocked.
 const gateScript = `#!/bin/sh
 # Managed by leadyard init. Blocks the tool call (exit 2) when leadyard is missing.
-if ! command -v leadyard >/dev/null 2>&1; then
-  echo "leadyard is not installed or not on PATH; guarded actions are blocked. Install leadyard or remove this hook." >&2
+# Agents started from a desktop app may not inherit the shell PATH, so look in the
+# usual install places too.
+LY=$(command -v leadyard 2>/dev/null)
+for c in "$LEADYARD_BIN" "$HOME/go/bin/leadyard" /opt/homebrew/bin/leadyard /usr/local/bin/leadyard; do
+  [ -n "$LY" ] && break
+  [ -n "$c" ] && [ -x "$c" ] && LY=$c
+done
+if [ -z "$LY" ]; then
+  echo "leadyard is not installed or not found; guarded actions are blocked. Install leadyard or set LEADYARD_BIN." >&2
   exit 2
 fi
-leadyard gate
+"$LY" gate
 code=$?
 [ "$code" -eq 0 ] || exit 2
 `
 
 const resumeScript = `#!/bin/sh
 # Managed by leadyard init. Prints the current task state into the session.
-command -v leadyard >/dev/null 2>&1 || { echo "leadyard is not installed; task state is not loaded."; exit 0; }
-leadyard resume --quiet || true
+LY=$(command -v leadyard 2>/dev/null)
+for c in "$LEADYARD_BIN" "$HOME/go/bin/leadyard" /opt/homebrew/bin/leadyard /usr/local/bin/leadyard; do
+  [ -n "$LY" ] && break
+  [ -n "$c" ] && [ -x "$c" ] && LY=$c
+done
+[ -n "$LY" ] || { echo "leadyard is not installed; task state is not loaded."; exit 0; }
+"$LY" resume --quiet || true
 `
 
 func hookScripts(rep *Report, root string) error {

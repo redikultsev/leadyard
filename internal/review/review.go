@@ -13,9 +13,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/zireaelq/leadyard/internal/ledger"
-	"github.com/zireaelq/leadyard/internal/repo"
-	"github.com/zireaelq/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/ledger"
+	"github.com/redikultsev/leadyard/internal/repo"
+	"github.com/redikultsev/leadyard/internal/task"
 )
 
 // Verdict is the JSON inside a ```leadyard-verdict block.

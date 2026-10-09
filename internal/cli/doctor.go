@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zireaelq/leadyard/internal/gate"
-	"github.com/zireaelq/leadyard/internal/task"
+	"github.com/redikultsev/leadyard/internal/gate"
+	"github.com/redikultsev/leadyard/internal/task"
 )
 
 type finding struct{ status, msg string }
@@ -60,10 +60,19 @@ func cmdDoctor(e *env, args []string) error {
 		fail("hook wrapper %s missing or not executable", wrapper)
 	} else {
 		push := `{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"` + root + `"}`
-		if code := runWrapper(wrapper, root, push, "/usr/bin:/bin"); code == 2 {
-			ok("wrapper blocks when leadyard is not on PATH")
+		emptyHome, _ := os.MkdirTemp("", "leadyard-doctor-")
+		defer os.RemoveAll(emptyHome)
+		if code := runWrapperEnv(wrapper, root, push, "/usr/bin:/bin", emptyHome); code == 2 {
+			ok("wrapper blocks when leadyard cannot be found")
+		} else if code == 0 {
+			warn("wrapper found a leadyard outside PATH (/opt/homebrew or /usr/local); the missing-binary block was not exercised")
 		} else {
-			fail("wrapper does not block without leadyard on PATH (exit %d)", code)
+			fail("wrapper does not block without leadyard (exit %d)", code)
+		}
+		if code := runWrapperEnv(wrapper, root, push, "/usr/bin:/bin", os.Getenv("HOME")); code == 2 {
+			ok("hook finds leadyard without the shell PATH (as a desktop-launched agent would)")
+		} else {
+			fail("hook cannot find leadyard with a minimal PATH (exit %d): install into ~/go/bin, /opt/homebrew/bin or /usr/local/bin, or set LEADYARD_BIN in .claude/settings.json env", code)
 		}
 		if bin != "" {
 			path := filepath.Dir(bin) + ":/usr/bin:/bin"
@@ -142,9 +151,13 @@ func cmdDoctor(e *env, args []string) error {
 }
 
 func runWrapper(wrapper, root, input, path string) int {
+	return runWrapperEnv(wrapper, root, input, path, os.Getenv("HOME"))
+}
+
+func runWrapperEnv(wrapper, root, input, path, home string) int {
 	cmd := exec.Command("/bin/sh", wrapper)
 	cmd.Dir = root
-	cmd.Env = []string{"PATH=" + path, "HOME=" + os.Getenv("HOME"), "CLAUDE_PROJECT_DIR=" + root}
+	cmd.Env = []string{"PATH=" + path, "HOME=" + home, "CLAUDE_PROJECT_DIR=" + root}
 	cmd.Stdin = strings.NewReader(input)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
