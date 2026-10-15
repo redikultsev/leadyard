@@ -121,6 +121,23 @@ func TestFindHookEnvWindows(t *testing.T) {
 	}
 }
 
+// The hook sees LEADYARD_BIN from the env of .claude/settings.json, else from the environment; doctor's
+// lookup probe must see the same.
+func TestLeadyardBin(t *testing.T) {
+	t.Setenv("LEADYARD_BIN", "/from/env")
+	settings := map[string]any{"env": map[string]any{"LEADYARD_BIN": "/from/settings"}}
+	if got := leadyardBin(settings); got != "/from/settings" {
+		t.Errorf("settings env: %q", got)
+	}
+	if got := leadyardBin(map[string]any{"env": map[string]any{"LEADYARD_AGENT": "claude-code"}}); got != "/from/env" {
+		t.Errorf("environment: %q", got)
+	}
+	t.Setenv("LEADYARD_BIN", "")
+	if got := leadyardBin(nil); got != "" {
+		t.Errorf("none: %q", got)
+	}
+}
+
 // The minimal PATH lists the given directories first, then the system's, in this OS's list format.
 func TestHookEnvPath(t *testing.T) {
 	h := hookEnv{sh: "sh", sys: []string{"s1", "s2"}}

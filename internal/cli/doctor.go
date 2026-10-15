@@ -78,7 +78,11 @@ func cmdDoctor(e *env, args []string) error {
 		} else {
 			fail("wrapper does not block without leadyard (exit %d)", code)
 		}
-		if code := hook.runWrapper(wrapper, root, status, hook.path(), userHome()); code == 0 {
+		var extra []string // the missing-binary probe above gets none of this
+		if b := leadyardBin(settings); b != "" {
+			extra = append(extra, "LEADYARD_BIN="+b)
+		}
+		if code := hook.runWrapper(wrapper, root, status, hook.path(), userHome(), extra...); code == 0 {
 			ok("hook finds leadyard without the shell PATH (as a desktop-launched agent would)")
 		} else {
 			fail("hook cannot find leadyard with a minimal PATH (exit %d): install into ~/go/bin, /opt/homebrew/bin or /usr/local/bin, or set LEADYARD_BIN in .claude/settings.json env", code)
@@ -228,10 +232,21 @@ func userHome() string {
 	return h
 }
 
-func (h hookEnv) runWrapper(wrapper, root, input, path, home string) int {
+// leadyardBin is LEADYARD_BIN as the hook gets it: from the env of .claude/settings.json, else from the
+// environment.
+func leadyardBin(settings map[string]any) string {
+	if env, ok := settings["env"].(map[string]any); ok {
+		if b, ok := env["LEADYARD_BIN"].(string); ok && b != "" {
+			return b
+		}
+	}
+	return os.Getenv("LEADYARD_BIN")
+}
+
+func (h hookEnv) runWrapper(wrapper, root, input, path, home string, extra ...string) int {
 	cmd := exec.Command(h.sh, wrapper)
 	cmd.Dir = root
-	cmd.Env = []string{"PATH=" + path, "HOME=" + home, "CLAUDE_PROJECT_DIR=" + root}
+	cmd.Env = append([]string{"PATH=" + path, "HOME=" + home, "CLAUDE_PROJECT_DIR=" + root}, extra...)
 	cmd.Stdin = strings.NewReader(input)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
