@@ -38,11 +38,13 @@ func cmdDoctor(e *env, args []string) error {
 	}
 
 	var settings map[string]any
+	projectReported := true // a FAIL below already names .claude/settings.json
 	if b, err := os.ReadFile(filepath.Join(root, ".claude/settings.json")); err != nil {
 		fail(".claude/settings.json missing: run `leadyard init`")
 	} else if err := json.Unmarshal(b, &settings); err != nil {
 		fail(".claude/settings.json is not valid JSON: %v", err)
 	} else {
+		projectReported = false
 		s := string(mustJSON(settings))
 		check := func(cond bool, good, bad string) {
 			if cond {
@@ -81,15 +83,19 @@ func cmdDoctor(e *env, args []string) error {
 		var extra []string // the missing-binary probe above gets none of this
 		sources := settingsSources(root)
 		lyBin, from, unreadable := leadyardBin(sources)
-		for _, p := range unreadable {
-			if p != filepath.Join(root, ".claude", "settings.json") { // reported above
-				warn("%s is not valid JSON: its LEADYARD_BIN was not read", p)
+		for _, u := range unreadable {
+			if u.path == filepath.Join(root, ".claude", "settings.json") && projectReported {
+				continue
 			}
+			warn("%s cannot be read: %v; its LEADYARD_BIN was not read", u.path, u.err)
 		}
 		via := ""
-		if lyBin != "" {
+		switch {
+		case lyBin != "":
 			extra = append(extra, "LEADYARD_BIN="+lyBin)
 			via = "; LEADYARD_BIN from " + from
+		case from != "":
+			via = "; LEADYARD_BIN is empty in " + from
 		}
 		if code := hook.runWrapper(wrapper, root, status, hook.path(), userHome(), extra...); code == 0 {
 			ok("hook finds leadyard without the shell PATH (as a desktop-launched agent would%s)", via)
@@ -269,11 +275,18 @@ func settingsSources(root string) []envSource {
 	return sources
 }
 
+// sourceError is a settings file that exists but could not be read or decoded.
+type sourceError struct {
+	path string
+	err  error
+}
+
 // leadyardBin is LEADYARD_BIN as a hook most likely gets it, and where it came from: the first of sources
-// whose env sets it, else the environment. Managed settings, --settings and a launch environment that wins
-// over settings (Claude Desktop) are not seen (decision 70). A file that exists but cannot be read is
-// returned in unreadable and skipped.
-func leadyardBin(sources []envSource) (bin, from string, unreadable []string) {
+// whose env sets it, else the environment; "" for from when none does. An empty value wins like any other:
+// Claude Code resolves env per variable, so the hook gets it empty. Managed settings, --settings and a
+// launch environment that wins over settings (Claude Desktop) are not seen (decision 70). A file that
+// exists but cannot be read or decoded is returned in unreadable and skipped.
+func leadyardBin(sources []envSource) (bin, from string, unreadable []sourceError) {
 	for _, s := range sources {
 		b, err := os.ReadFile(s.path)
 		if errors.Is(err, os.ErrNotExist) {
@@ -286,14 +299,14 @@ func leadyardBin(sources []envSource) (bin, from string, unreadable []string) {
 			err = json.Unmarshal(b, &settings)
 		}
 		if err != nil {
-			unreadable = append(unreadable, s.path)
+			unreadable = append(unreadable, sourceError{s.path, err})
 			continue
 		}
-		if v, ok := settings.Env["LEADYARD_BIN"].(string); ok && v != "" {
+		if v, ok := settings.Env["LEADYARD_BIN"].(string); ok {
 			return v, s.name, unreadable
 		}
 	}
-	if v := os.Getenv("LEADYARD_BIN"); v != "" {
+	if v, ok := os.LookupEnv("LEADYARD_BIN"); ok {
 		return v, "the environment", unreadable
 	}
 	return "", "", unreadable

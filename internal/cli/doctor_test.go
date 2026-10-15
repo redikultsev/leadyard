@@ -137,7 +137,13 @@ func TestLeadyardBin(t *testing.T) {
 	local, project, user := write("local.json", with("/from/local")), write("project.json", with("/from/project")),
 		write("user.json", with("/from/user"))
 	other := write("other.json", `{"env": {"LEADYARD_AGENT": "claude-code"}}`)
+	empty := write("empty.json", with(""))
 	broken := write("broken.json", `{"env": `)
+	notObject := write("not-object.json", `{"env": "x"}`)
+	folder := envSource{name: "folder.json", path: filepath.Join(dir, "folder.json")}
+	if err := os.Mkdir(folder.path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	missing := envSource{name: "missing.json", path: filepath.Join(dir, "missing.json")}
 	t.Setenv("LEADYARD_BIN", "/from/env")
 
@@ -145,23 +151,36 @@ func TestLeadyardBin(t *testing.T) {
 		name       string
 		sources    []envSource
 		bin, from  string
-		unreadable int
+		unreadable string // the path reported, if any
 	}{
-		{"local first", []envSource{local, project, user}, "/from/local", "local.json", 0},
-		{"project over user", []envSource{missing, project, user}, "/from/project", "project.json", 0},
-		{"user", []envSource{missing, other, user}, "/from/user", "user.json", 0},
-		{"a file without it is passed over", []envSource{other, project}, "/from/project", "project.json", 0},
-		{"unreadable is reported and skipped", []envSource{broken, user}, "/from/user", "user.json", 1},
-		{"environment last", []envSource{missing, other}, "/from/env", "the environment", 0},
+		{"local first", []envSource{local, project, user}, "/from/local", "local.json", ""},
+		{"project over user", []envSource{missing, project, user}, "/from/project", "project.json", ""},
+		{"user", []envSource{missing, other, user}, "/from/user", "user.json", ""},
+		{"a file without it is passed over", []envSource{other, project}, "/from/project", "project.json", ""},
+		// An empty value wins too: the hook gets it empty, as Claude Code resolves env per variable.
+		{"an empty value wins", []envSource{empty, project}, "", "empty.json", ""},
+		{"broken JSON is reported and skipped", []envSource{broken, user}, "/from/user", "user.json", broken.path},
+		{"env that is not an object", []envSource{notObject, user}, "/from/user", "user.json", notObject.path},
+		{"a read error", []envSource{folder, user}, "/from/user", "user.json", folder.path},
+		{"environment last", []envSource{missing, other}, "/from/env", "the environment", ""},
 	}
 	for _, c := range cases {
 		bin, from, unreadable := leadyardBin(c.sources)
-		if bin != c.bin || from != c.from || len(unreadable) != c.unreadable {
-			t.Errorf("%s: got %q from %q, %d unreadable; want %q from %q, %d", c.name, bin, from, len(unreadable),
-				c.bin, c.from, c.unreadable)
+		if bin != c.bin || from != c.from {
+			t.Errorf("%s: got %q from %q; want %q from %q", c.name, bin, from, c.bin, c.from)
+		}
+		switch {
+		case c.unreadable == "" && len(unreadable) != 0:
+			t.Errorf("%s: unexpected unreadable %v", c.name, unreadable)
+		case c.unreadable != "" && (len(unreadable) != 1 || unreadable[0].path != c.unreadable || unreadable[0].err == nil):
+			t.Errorf("%s: unreadable %v, want %s with its error", c.name, unreadable, c.unreadable)
 		}
 	}
 	t.Setenv("LEADYARD_BIN", "")
+	if bin, from, _ := leadyardBin([]envSource{missing, other}); bin != "" || from != "the environment" {
+		t.Errorf("empty in the environment: %q from %q", bin, from)
+	}
+	os.Unsetenv("LEADYARD_BIN")
 	if bin, from, _ := leadyardBin([]envSource{missing, other}); bin != "" || from != "" {
 		t.Errorf("none: %q from %q", bin, from)
 	}
