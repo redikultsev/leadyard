@@ -175,12 +175,17 @@ edited; a new entry replaces an old one and links to it. Sections refer to
     on PATH (`System32\bash.exe` starts WSL). The gate reads a path the way Windows opens it: a Git Bash
     drive path `/c/...` and `\\?\C:\...` as `C:\...`, and `\...` without a drive on the drive of the
     repository (§8.2).
-67. **The gate's path checks ignore letter case on every OS.** Windows and macOS open
-    `.LEADYARD/config.yaml` as `.leadyard/config.yaml`; on a case-sensitive file system refusing such a
-    name fails closed (principle 3, §8.2).
-68. **Known Windows limits:** the gate does not normalise trailing dots or spaces, `::$DATA` streams,
-    8.3 short names, junctions or `\\.\` device paths; `leadyard run` needs `sh` on PATH, as in Git Bash.
-    Each comes back when a real case needs it (principle 9).
+67. **The gate's path checks ignore letter case on every OS,** the repository root included. Windows and
+    macOS open `.LEADYARD/config.yaml` as `.leadyard/config.yaml` and `/REPO` as `/repo`; on a
+    case-sensitive file system refusing such a name fails closed (principle 3, §8.2).
+68. **Known Windows limits.** The gate does not see every name Windows opens as a repository file. Among
+    others: trailing dots or spaces, `::$DATA` streams, 8.3 short names, junctions and symlinks, `\\.\`
+    device paths, subst and mapped drive letters, UNC paths to the local disk (`\\localhost\C$\...`,
+    `\\?\UNC\...`), Git Bash mounts other than drives (`/tmp`), a path without a drive when the repository
+    is on a UNC share, and `/a/...`, which the gate reads as drive `A:` while a file tool may open it on
+    the current drive (a repository under a one-letter folder, such as `D:\a\` on GitHub's Windows runners).
+    `leadyard run` needs `sh` on PATH, as in Git Bash. Each comes back when a real case needs it
+    (principle 9).
 69. **The repository checks out LF on every platform** (`* text=auto eol=lf`): with
     `core.autocrlf=true` a CRLF tree fails `gofmt -l` and the skills' front matter test, and a binary
     built from it embeds CRLF skills.
