@@ -65,17 +65,20 @@ func cmdDoctor(e *env, args []string) error {
 	} else if hookErr != nil {
 		fail("no shell to run the hooks: %v", hookErr)
 	} else {
+		// The wrapper exits 2 both when leadyard is missing and when the gate denies, so the lookup probes use a
+		// call the gate allows: 0 means leadyard was found and ran.
 		push := hookInput("git push origin main", root)
+		status := hookInput("git status", root)
 		emptyHome, _ := os.MkdirTemp("", "leadyard-doctor-")
 		defer os.RemoveAll(emptyHome)
-		if code := hook.runWrapper(wrapper, root, push, hook.path(), emptyHome); code == 2 {
+		if code := hook.runWrapper(wrapper, root, status, hook.path(), emptyHome); code == 2 {
 			ok("wrapper blocks when leadyard cannot be found")
 		} else if code == 0 {
 			warn("wrapper found a leadyard outside PATH (/opt/homebrew or /usr/local); the missing-binary block was not exercised")
 		} else {
 			fail("wrapper does not block without leadyard (exit %d)", code)
 		}
-		if code := hook.runWrapper(wrapper, root, push, hook.path(), userHome()); code == 2 {
+		if code := hook.runWrapper(wrapper, root, status, hook.path(), userHome()); code == 0 {
 			ok("hook finds leadyard without the shell PATH (as a desktop-launched agent would)")
 		} else {
 			fail("hook cannot find leadyard with a minimal PATH (exit %d): install into ~/go/bin, /opt/homebrew/bin or /usr/local/bin, or set LEADYARD_BIN in .claude/settings.json env", code)
@@ -87,7 +90,6 @@ func cmdDoctor(e *env, args []string) error {
 			} else {
 				fail("gate does not block `git push origin main` (exit %d)", code)
 			}
-			status := hookInput("git status", root)
 			start := time.Now()
 			code := hook.runWrapper(wrapper, root, status, path, userHome())
 			if code == 0 {
@@ -184,16 +186,24 @@ func findHookEnv() (hookEnv, error) {
 }
 
 // gitSh finds Git for Windows' sh.exe from its git.exe, which sits in cmd\, bin\ or mingw64\bin\ of the
-// install; sh.exe is in usr\bin\ or bin\. "" when there is none.
+// install; sh.exe is in usr\bin\ or bin\ of that install. "" for any other layout, such as a shim: an sh.exe
+// found elsewhere is not Git's.
 func gitSh(gitExe string) string {
 	dir := filepath.Dir(gitExe)
-	for i := 0; i < 3; i++ {
-		for _, sh := range []string{filepath.Join(dir, "usr", "bin", "sh.exe"), filepath.Join(dir, "bin", "sh.exe")} {
-			if st, err := os.Stat(sh); err == nil && !st.IsDir() {
-				return sh
-			}
+	install := filepath.Dir(dir)
+	switch strings.ToLower(filepath.Base(dir)) {
+	case "cmd":
+	case "bin":
+		if strings.EqualFold(filepath.Base(install), "mingw64") {
+			install = filepath.Dir(install)
 		}
-		dir = filepath.Dir(dir)
+	default:
+		return ""
+	}
+	for _, sh := range []string{filepath.Join(install, "usr", "bin", "sh.exe"), filepath.Join(install, "bin", "sh.exe")} {
+		if st, err := os.Stat(sh); err == nil && !st.IsDir() {
+			return sh
+		}
 	}
 	return ""
 }

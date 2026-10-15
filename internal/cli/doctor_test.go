@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,11 @@ func TestGitSh(t *testing.T) {
 	}{
 		{"usr/bin first", []string{"cmd/git.exe", "usr/bin/sh.exe", "bin/sh.exe"}, "cmd/git.exe", "usr/bin/sh.exe"},
 		{"bin only", []string{"mingw64/bin/git.exe", "bin/sh.exe"}, "mingw64/bin/git.exe", "bin/sh.exe"},
+		{"git in bin", []string{"bin/git.exe", "usr/bin/sh.exe"}, "bin/git.exe", "usr/bin/sh.exe"},
 		{"no sh", []string{"cmd/git.exe"}, "cmd/git.exe", ""},
+		// Not Git's sh: above the install, or next to a shim.
+		{"sh above the install", []string{"cmd/git.exe", "../usr/bin/sh.exe", "../bin/sh.exe"}, "cmd/git.exe", ""},
+		{"shim", []string{"scoop/shims/git.exe", "bin/sh.exe", "scoop/bin/sh.exe"}, "scoop/shims/git.exe", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -56,6 +61,63 @@ func TestGitSh(t *testing.T) {
 				t.Errorf("gitSh = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestFindHookEnvUnix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix layout")
+	}
+	h, err := findHookEnv()
+	if err != nil || h.sh != "/bin/sh" || strings.Join(h.sys, ":") != "/usr/bin:/bin" {
+		t.Errorf("findHookEnv = %+v, %v", h, err)
+	}
+}
+
+// On Windows the hook shell is CLAUDE_CODE_GIT_BASH_PATH or Git's own sh, never a bash or sh found on PATH:
+// System32\bash.exe starts WSL (decision 66).
+func TestFindHookEnvWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows layout")
+	}
+	dir := t.TempDir()
+	touch := func(rel string) string {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	touch("wsl/bash.exe")
+	touch("wsl/sh.exe")
+	git := touch("Git/cmd/git.exe")
+	gitSh := touch("Git/usr/bin/sh.exe")
+	t.Setenv("PATH", filepath.Join(dir, "wsl")+";"+filepath.Dir(git))
+	t.Setenv("CLAUDE_CODE_GIT_BASH_PATH", "")
+
+	h, err := findHookEnv()
+	if err != nil || h.sh != gitSh || strings.Join(h.sys, ";") != filepath.Dir(gitSh)+";"+filepath.Dir(git) {
+		t.Errorf("Git's sh: findHookEnv = %+v, %v", h, err)
+	}
+
+	bash := touch("Git/bin/bash.exe")
+	t.Setenv("CLAUDE_CODE_GIT_BASH_PATH", bash)
+	if h, err := findHookEnv(); err != nil || h.sh != bash {
+		t.Errorf("CLAUDE_CODE_GIT_BASH_PATH first: findHookEnv = %+v, %v", h, err)
+	}
+
+	t.Setenv("CLAUDE_CODE_GIT_BASH_PATH", filepath.Join(dir, "missing.exe"))
+	if _, err := findHookEnv(); err == nil {
+		t.Error("CLAUDE_CODE_GIT_BASH_PATH that is not a file: no error")
+	}
+
+	t.Setenv("CLAUDE_CODE_GIT_BASH_PATH", "")
+	t.Setenv("PATH", filepath.Join(dir, "wsl"))
+	if _, err := findHookEnv(); err == nil {
+		t.Error("no git on PATH: no error")
 	}
 }
 
