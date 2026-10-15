@@ -97,7 +97,11 @@ func rel(p Policy, file string) string {
 	}
 	r, err := filepath.Rel(p.Root, filepath.Clean(file))
 	if err != nil || strings.HasPrefix(r, "..") {
-		return ""
+		// A root that differs only in letter case is the same folder on Windows and macOS (decision 67).
+		r, err = filepath.Rel(strings.ToLower(p.Root), strings.ToLower(filepath.Clean(file)))
+		if err != nil || strings.HasPrefix(r, "..") {
+			return ""
+		}
 	}
 	return filepath.ToSlash(r)
 }
