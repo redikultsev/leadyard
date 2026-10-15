@@ -79,13 +79,27 @@ func cmdDoctor(e *env, args []string) error {
 			fail("wrapper does not block without leadyard (exit %d)", code)
 		}
 		var extra []string // the missing-binary probe above gets none of this
-		if b := leadyardBin(settings); b != "" {
-			extra = append(extra, "LEADYARD_BIN="+b)
+		sources := settingsSources(root)
+		lyBin, from, unreadable := leadyardBin(sources)
+		for _, p := range unreadable {
+			if p != filepath.Join(root, ".claude", "settings.json") { // reported above
+				warn("%s is not valid JSON: its LEADYARD_BIN was not read", p)
+			}
+		}
+		via := ""
+		if lyBin != "" {
+			extra = append(extra, "LEADYARD_BIN="+lyBin)
+			via = "; LEADYARD_BIN from " + from
 		}
 		if code := hook.runWrapper(wrapper, root, status, hook.path(), userHome(), extra...); code == 0 {
-			ok("hook finds leadyard without the shell PATH (as a desktop-launched agent would)")
+			ok("hook finds leadyard without the shell PATH (as a desktop-launched agent would%s)", via)
 		} else {
-			fail("hook cannot find leadyard with a minimal PATH (exit %d): install into ~/go/bin, /opt/homebrew/bin or /usr/local/bin, or set LEADYARD_BIN in .claude/settings.json env", code)
+			var places []string
+			for _, s := range sources {
+				places = append(places, s.name)
+			}
+			fail("hook cannot find leadyard with a minimal PATH (exit %d%s): install into ~/go/bin, /opt/homebrew/bin or /usr/local/bin, or set LEADYARD_BIN in the env of %s (read in this order, then the environment)",
+				code, via, strings.Join(places, ", "))
 		}
 		if bin != "" {
 			path := hook.path(filepath.Dir(bin))
@@ -232,15 +246,57 @@ func userHome() string {
 	return h
 }
 
-// leadyardBin is LEADYARD_BIN as the hook gets it: from the env of .claude/settings.json, else from the
-// environment.
-func leadyardBin(settings map[string]any) string {
-	if env, ok := settings["env"].(map[string]any); ok {
-		if b, ok := env["LEADYARD_BIN"].(string); ok && b != "" {
-			return b
+// envSource is a settings file whose env reaches a hook; name is how doctor's messages call it.
+type envSource struct{ name, path string }
+
+// settingsSources are the settings files whose env reaches a hook, highest precedence first: local, project,
+// then the user's, in CLAUDE_CONFIG_DIR when it is set, else in ~/.claude (%USERPROFILE% on Windows).
+func settingsSources(root string) []envSource {
+	sources := []envSource{
+		{".claude/settings.local.json", filepath.Join(root, ".claude", "settings.local.json")},
+		{".claude/settings.json", filepath.Join(root, ".claude", "settings.json")},
+	}
+	user := os.Getenv("CLAUDE_CONFIG_DIR")
+	if user == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			user = filepath.Join(home, ".claude")
 		}
 	}
-	return os.Getenv("LEADYARD_BIN")
+	if user != "" {
+		p := filepath.Join(user, "settings.json")
+		sources = append(sources, envSource{p, p})
+	}
+	return sources
+}
+
+// leadyardBin is LEADYARD_BIN as a hook most likely gets it, and where it came from: the first of sources
+// whose env sets it, else the environment. Managed settings, --settings and a launch environment that wins
+// over settings (Claude Desktop) are not seen (decision 70). A file that exists but cannot be read is
+// returned in unreadable and skipped.
+func leadyardBin(sources []envSource) (bin, from string, unreadable []string) {
+	for _, s := range sources {
+		b, err := os.ReadFile(s.path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		var settings struct {
+			Env map[string]any `json:"env"`
+		}
+		if err == nil {
+			err = json.Unmarshal(b, &settings)
+		}
+		if err != nil {
+			unreadable = append(unreadable, s.path)
+			continue
+		}
+		if v, ok := settings.Env["LEADYARD_BIN"].(string); ok && v != "" {
+			return v, s.name, unreadable
+		}
+	}
+	if v := os.Getenv("LEADYARD_BIN"); v != "" {
+		return v, "the environment", unreadable
+	}
+	return "", "", unreadable
 }
 
 func (h hookEnv) runWrapper(wrapper, root, input, path, home string, extra ...string) int {

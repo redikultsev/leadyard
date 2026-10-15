@@ -121,20 +121,75 @@ func TestFindHookEnvWindows(t *testing.T) {
 	}
 }
 
-// The hook sees LEADYARD_BIN from the env of .claude/settings.json, else from the environment; doctor's
-// lookup probe must see the same.
+// The hook sees LEADYARD_BIN by Claude Code's precedence: the env of .claude/settings.local.json, then
+// .claude/settings.json, then the user settings, then the environment (decision 70). Doctor's lookup probe
+// must see the same, and say where it came from.
 func TestLeadyardBin(t *testing.T) {
-	t.Setenv("LEADYARD_BIN", "/from/env")
-	settings := map[string]any{"env": map[string]any{"LEADYARD_BIN": "/from/settings"}}
-	if got := leadyardBin(settings); got != "/from/settings" {
-		t.Errorf("settings env: %q", got)
+	dir := t.TempDir()
+	write := func(name, content string) envSource {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return envSource{name: name, path: p}
 	}
-	if got := leadyardBin(map[string]any{"env": map[string]any{"LEADYARD_AGENT": "claude-code"}}); got != "/from/env" {
-		t.Errorf("environment: %q", got)
+	with := func(v string) string { return `{"env": {"LEADYARD_BIN": "` + v + `"}}` }
+	local, project, user := write("local.json", with("/from/local")), write("project.json", with("/from/project")),
+		write("user.json", with("/from/user"))
+	other := write("other.json", `{"env": {"LEADYARD_AGENT": "claude-code"}}`)
+	broken := write("broken.json", `{"env": `)
+	missing := envSource{name: "missing.json", path: filepath.Join(dir, "missing.json")}
+	t.Setenv("LEADYARD_BIN", "/from/env")
+
+	cases := []struct {
+		name       string
+		sources    []envSource
+		bin, from  string
+		unreadable int
+	}{
+		{"local first", []envSource{local, project, user}, "/from/local", "local.json", 0},
+		{"project over user", []envSource{missing, project, user}, "/from/project", "project.json", 0},
+		{"user", []envSource{missing, other, user}, "/from/user", "user.json", 0},
+		{"a file without it is passed over", []envSource{other, project}, "/from/project", "project.json", 0},
+		{"unreadable is reported and skipped", []envSource{broken, user}, "/from/user", "user.json", 1},
+		{"environment last", []envSource{missing, other}, "/from/env", "the environment", 0},
+	}
+	for _, c := range cases {
+		bin, from, unreadable := leadyardBin(c.sources)
+		if bin != c.bin || from != c.from || len(unreadable) != c.unreadable {
+			t.Errorf("%s: got %q from %q, %d unreadable; want %q from %q, %d", c.name, bin, from, len(unreadable),
+				c.bin, c.from, c.unreadable)
+		}
 	}
 	t.Setenv("LEADYARD_BIN", "")
-	if got := leadyardBin(nil); got != "" {
-		t.Errorf("none: %q", got)
+	if bin, from, _ := leadyardBin([]envSource{missing, other}); bin != "" || from != "" {
+		t.Errorf("none: %q from %q", bin, from)
+	}
+}
+
+// The user settings live under CLAUDE_CONFIG_DIR when it is set, else under ~/.claude (%USERPROFILE% on Windows).
+func TestSettingsSources(t *testing.T) {
+	root := filepath.Join("repo")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	want := []string{filepath.Join(root, ".claude", "settings.local.json"), filepath.Join(root, ".claude", "settings.json"),
+		filepath.Join(home, ".claude", "settings.json")}
+	got := settingsSources(root)
+	if len(got) != len(want) {
+		t.Fatalf("sources: %+v", got)
+	}
+	for i := range want {
+		if got[i].path != want[i] {
+			t.Errorf("source %d: %q, want %q", i, got[i].path, want[i])
+		}
+	}
+	config := filepath.Join(t.TempDir(), "claude-config")
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	if got := settingsSources(root); got[2].path != filepath.Join(config, "settings.json") {
+		t.Errorf("CLAUDE_CONFIG_DIR: %q", got[2].path)
 	}
 }
 
