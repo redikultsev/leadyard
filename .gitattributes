@@ -1,2 +1,4 @@
+# LF on every platform, whatever core.autocrlf says: gofmt and the skills' front matter need it (decision 69).
+* text=auto eol=lf
 # leadyard
 .leadyard/**/*.jsonl merge=union
