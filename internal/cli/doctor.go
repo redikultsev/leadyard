@@ -3,10 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -56,34 +58,38 @@ func cmdDoctor(e *env, args []string) error {
 	}
 
 	wrapper := filepath.Join(root, ".claude/hooks/leadyard-gate.sh")
-	if st, err := os.Stat(wrapper); err != nil || st.Mode()&0o111 == 0 {
+	hook, hookErr := findHookEnv()
+	// Windows has no exec bit; the shell runs the wrapper by name there.
+	if st, err := os.Stat(wrapper); err != nil || (runtime.GOOS != "windows" && st.Mode()&0o111 == 0) {
 		fail("hook wrapper %s missing or not executable", wrapper)
+	} else if hookErr != nil {
+		fail("no shell to run the hooks: %v", hookErr)
 	} else {
-		push := `{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"` + root + `"}`
+		push := hookInput("git push origin main", root)
 		emptyHome, _ := os.MkdirTemp("", "leadyard-doctor-")
 		defer os.RemoveAll(emptyHome)
-		if code := runWrapperEnv(wrapper, root, push, "/usr/bin:/bin", emptyHome); code == 2 {
+		if code := hook.runWrapper(wrapper, root, push, hook.path(), emptyHome); code == 2 {
 			ok("wrapper blocks when leadyard cannot be found")
 		} else if code == 0 {
 			warn("wrapper found a leadyard outside PATH (/opt/homebrew or /usr/local); the missing-binary block was not exercised")
 		} else {
 			fail("wrapper does not block without leadyard (exit %d)", code)
 		}
-		if code := runWrapperEnv(wrapper, root, push, "/usr/bin:/bin", os.Getenv("HOME")); code == 2 {
+		if code := hook.runWrapper(wrapper, root, push, hook.path(), userHome()); code == 2 {
 			ok("hook finds leadyard without the shell PATH (as a desktop-launched agent would)")
 		} else {
 			fail("hook cannot find leadyard with a minimal PATH (exit %d): install into ~/go/bin, /opt/homebrew/bin or /usr/local/bin, or set LEADYARD_BIN in .claude/settings.json env", code)
 		}
 		if bin != "" {
-			path := filepath.Dir(bin) + ":/usr/bin:/bin"
-			if code := runWrapper(wrapper, root, push, path); code == 2 {
+			path := hook.path(filepath.Dir(bin))
+			if code := hook.runWrapper(wrapper, root, push, path, userHome()); code == 2 {
 				ok("gate blocks `git push origin main` through the wrapper")
 			} else {
 				fail("gate does not block `git push origin main` (exit %d)", code)
 			}
-			status := `{"tool_name":"Bash","tool_input":{"command":"git status"},"cwd":"` + root + `"}`
+			status := hookInput("git status", root)
 			start := time.Now()
-			code := runWrapper(wrapper, root, status, path)
+			code := hook.runWrapper(wrapper, root, status, path, userHome())
 			if code == 0 {
 				ok("gate allows `git status` (%s through the wrapper)", time.Since(start).Round(time.Millisecond))
 			} else {
@@ -150,12 +156,70 @@ func cmdDoctor(e *env, args []string) error {
 	return nil
 }
 
-func runWrapper(wrapper, root, input, path string) int {
-	return runWrapperEnv(wrapper, root, input, path, os.Getenv("HOME"))
+// hookEnv is how Claude Code runs a hook on this OS: the shell, and the system directories a minimal PATH
+// keeps. On Windows that is the sh of Git for Windows and git's own directory (decision 66).
+type hookEnv struct {
+	sh  string
+	sys []string
 }
 
-func runWrapperEnv(wrapper, root, input, path, home string) int {
-	cmd := exec.Command("/bin/sh", wrapper)
+func findHookEnv() (hookEnv, error) {
+	if runtime.GOOS != "windows" {
+		return hookEnv{sh: "/bin/sh", sys: []string{"/usr/bin", "/bin"}}, nil
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return hookEnv{}, errors.New("git is not on PATH: install Git for Windows")
+	}
+	sh := os.Getenv("CLAUDE_CODE_GIT_BASH_PATH")
+	if sh == "" {
+		// Never a bash found on PATH: System32\bash.exe starts WSL.
+		if sh = gitSh(git); sh == "" {
+			return hookEnv{}, fmt.Errorf("no sh.exe in the Git install of %s: reinstall Git for Windows or set CLAUDE_CODE_GIT_BASH_PATH", git)
+		}
+	} else if st, err := os.Stat(sh); err != nil || st.IsDir() {
+		return hookEnv{}, fmt.Errorf("CLAUDE_CODE_GIT_BASH_PATH %s is not a file", sh)
+	}
+	return hookEnv{sh: sh, sys: []string{filepath.Dir(sh), filepath.Dir(git)}}, nil
+}
+
+// gitSh finds Git for Windows' sh.exe from its git.exe, which sits in cmd\, bin\ or mingw64\bin\ of the
+// install; sh.exe is in usr\bin\ or bin\. "" when there is none.
+func gitSh(gitExe string) string {
+	dir := filepath.Dir(gitExe)
+	for i := 0; i < 3; i++ {
+		for _, sh := range []string{filepath.Join(dir, "usr", "bin", "sh.exe"), filepath.Join(dir, "bin", "sh.exe")} {
+			if st, err := os.Stat(sh); err == nil && !st.IsDir() {
+				return sh
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
+// path is a minimal PATH: dirs, then the system directories, in this OS's list format. Git's sh reads a
+// Windows-style list.
+func (h hookEnv) path(dirs ...string) string {
+	return strings.Join(append(append([]string{}, dirs...), h.sys...), string(os.PathListSeparator))
+}
+
+// hookInput is a PreToolUse event for a Bash command; a Windows root needs JSON escaping.
+func hookInput(command, root string) string {
+	return string(mustJSON(map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": command}, "cwd": root}))
+}
+
+// userHome is HOME, or the OS's home directory where HOME is not set (PowerShell on Windows).
+func userHome() string {
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	h, _ := os.UserHomeDir()
+	return h
+}
+
+func (h hookEnv) runWrapper(wrapper, root, input, path, home string) int {
+	cmd := exec.Command(h.sh, wrapper)
 	cmd.Dir = root
 	cmd.Env = []string{"PATH=" + path, "HOME=" + home, "CLAUDE_PROJECT_DIR=" + root}
 	cmd.Stdin = strings.NewReader(input)
