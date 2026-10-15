@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -88,6 +89,11 @@ func rel(p Policy, file string) string {
 	if file == "" {
 		return ""
 	}
+	if runtime.GOOS == "windows" {
+		if w, ok := fromGitBash(file); ok {
+			file = w
+		}
+	}
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(p.Root, file)
 	}
@@ -98,8 +104,24 @@ func rel(p Policy, file string) string {
 	return filepath.ToSlash(r)
 }
 
+// fromGitBash reads a Git Bash drive path, /c or /c/..., as the Windows path it names, C:\... Claude Code's
+// Bash tool on Windows runs in Git Bash, so commands name files this way (decision 66).
+func fromGitBash(p string) (string, bool) {
+	if len(p) < 2 || p[0] != '/' || !isLetter(p[1]) || (len(p) > 2 && p[2] != '/') {
+		return "", false
+	}
+	rest := strings.TrimPrefix(p[2:], "/")
+	return strings.ToUpper(p[1:2]) + `:\` + strings.ReplaceAll(rest, "/", `\`), true
+}
+
+func isLetter(c byte) bool { return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' }
+
+// The checks below ignore letter case on every OS: Windows and macOS open .LEADYARD/config.yaml as
+// .leadyard/config.yaml, and on a case-sensitive file system refusing such a name fails closed (decision 67).
+
 // stateFile reports files only the CLI or a human may write.
 func stateFile(r string) bool {
+	r = strings.ToLower(r)
 	if r == config.TeamFile || r == config.ZonesFile {
 		return true
 	}
@@ -110,18 +132,27 @@ func stateFile(r string) bool {
 	return false
 }
 
+func protectedPath(p Policy, r string) bool {
+	for _, pat := range p.ProtectedPaths {
+		if repo.Match(strings.ToLower(pat), strings.ToLower(r)) {
+			return true
+		}
+	}
+	return false
+}
+
 func evalWrite(file string, p Policy) Decision {
 	r := rel(p, file)
 	if r == "" {
 		return allow()
 	}
-	if r == ".git" || strings.HasPrefix(r, ".git/") {
+	if l := strings.ToLower(r); l == ".git" || strings.HasPrefix(l, ".git/") {
 		return deny("the agent does not write inside .git/")
 	}
 	if stateFile(r) {
 		return deny("%s is written only by the leadyard CLI or a human; use `leadyard run`, `leadyard decide` or ask the human", r)
 	}
-	if repo.MatchAny(p.ProtectedPaths, r) {
+	if protectedPath(p, r) {
 		return ask("%s is a protected path; changing it needs your confirmation", r)
 	}
 	return allow()

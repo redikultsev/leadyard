@@ -1,13 +1,26 @@
 package gate
 
 import (
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/redikultsev/leadyard/internal/config"
 )
 
+// testRoot is an absolute repository root on the OS running the tests: "/repo" is not absolute on Windows.
+func testRoot() string {
+	if runtime.GOOS == "windows" {
+		return `C:\repo`
+	}
+	return "/repo"
+}
+
+// in names a file in the test repository by its slash path.
+func in(rel string) string { return filepath.Join(testRoot(), filepath.FromSlash(rel)) }
+
 func pol(delivery, branch string) Policy {
-	return Policy{Root: "/repo", Delivery: delivery, CurrentBranch: branch,
+	return Policy{Root: testRoot(), Delivery: delivery, CurrentBranch: branch,
 		ProtectedBranches: []string{"main", "master", "develop", "release/*"},
 		ProtectedPaths:    []string{".github/workflows/**", "CODEOWNERS"}}
 }
@@ -75,6 +88,9 @@ func TestShell(t *testing.T) {
 		{"pr", "feat/x", "sed -i '' 's/failed/passed/' .leadyard/tasks/T-1/evidence.jsonl", Deny},
 		{"pr", "feat/x", "cat .leadyard/tasks/T-1/evidence.jsonl", Allow},
 		{"pr", "feat/x", "leadyard run tests", Allow},
+		// Letter case does not matter: Windows and macOS open the same file (decision 67).
+		{"pr", "feat/x", "echo x > .LEADYARD/config.yaml", Deny},
+		{"pr", "feat/x", "cp a .leadyard/TASKS/T-1/EVENTS.jsonl", Deny},
 		// Unparseable.
 		{"pr", "feat/x", "echo 'unterminated", Ask},
 	}
@@ -91,14 +107,23 @@ func TestShell(t *testing.T) {
 
 func TestFileTools(t *testing.T) {
 	p := pol(config.DeliveryPR, "feat/x")
+	outside := "/elsewhere/file"
+	if runtime.GOOS == "windows" {
+		outside = `D:\elsewhere\file`
+	}
 	cases := map[string]string{
-		"/repo/src/a.go":                           Allow,
-		"/repo/.leadyard/tasks/T-1/task.md":        Allow,
-		"/repo/.leadyard/tasks/T-1/evidence.jsonl": Deny,
-		"/repo/.leadyard/config.yaml":              Deny,
-		"/repo/.git/hooks/pre-push":                Deny,
-		"/repo/.github/workflows/ci.yml":           Ask,
-		"/elsewhere/file":                          Allow,
+		in("src/a.go"):                           Allow,
+		in(".leadyard/tasks/T-1/task.md"):        Allow,
+		in(".leadyard/tasks/T-1/evidence.jsonl"): Deny,
+		in(".leadyard/config.yaml"):              Deny,
+		in(".git/hooks/pre-push"):                Deny,
+		in(".github/workflows/ci.yml"):           Ask,
+		outside:                                  Allow,
+		// Letter case (decision 67).
+		in(".LEADYARD/CONFIG.YAML"):              Deny,
+		in(".Leadyard/Tasks/T-1/Evidence.JSONL"): Deny,
+		in(".GIT/config"):                        Deny,
+		in(".GitHub/Workflows/ci.yml"):           Ask,
 	}
 	for fp, want := range cases {
 		got := Evaluate(HookInput{ToolName: "Write", ToolInput: map[string]any{"file_path": fp}}, p)
@@ -112,7 +137,57 @@ func TestFileTools(t *testing.T) {
 	if d := Evaluate(HookInput{ToolName: "mcp__github__merge_pull_request"}, p); d.Verdict != Deny {
 		t.Errorf("MCP merge: %s", d.Verdict)
 	}
-	if d := Evaluate(HookInput{ToolName: "Read", ToolInput: map[string]any{"file_path": "/repo/.leadyard/tasks/T-1/evidence.jsonl"}}, p); d.Verdict != Allow {
+	if d := Evaluate(HookInput{ToolName: "Read", ToolInput: map[string]any{"file_path": in(".leadyard/tasks/T-1/evidence.jsonl")}}, p); d.Verdict != Allow {
 		t.Errorf("Read must be allowed: %s", d.Verdict)
+	}
+}
+
+func TestFromGitBash(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"/c/Users/x", `C:\Users\x`, true},
+		{"/d/a/b/c.txt", `D:\a\b\c.txt`, true},
+		{"/c/", `C:\`, true},
+		{"/C", `C:\`, true},
+		{"/", "", false},
+		{"/usr/bin", "", false},
+		{"/cygdrive/c/x", "", false},
+		{"//server/share", "", false},
+		{"/1/x", "", false},
+		{"c/x", "", false},
+		{`C:\x`, "", false},
+	}
+	for _, c := range cases {
+		got, ok := fromGitBash(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("fromGitBash(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// Claude Code's Bash tool on Windows runs in Git Bash, which names C:\repo as /c/repo (decision 66).
+func TestGitBashPathsOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Git Bash drive paths are read only on Windows")
+	}
+	p := pol(config.DeliveryPR, "feat/x")
+	cases := map[string]string{
+		"/c/repo/src/a.go":                         Allow,
+		"/c/repo/.leadyard/config.yaml":            Deny,
+		"/c/repo/.leadyard/tasks/T-1/events.jsonl": Deny,
+		"/c/repo/.git/config":                      Deny,
+		"/c/repo/.github/workflows/ci.yml":         Ask,
+		"/d/elsewhere/file":                        Allow,
+	}
+	for fp, want := range cases {
+		got := Evaluate(HookInput{ToolName: "Write", ToolInput: map[string]any{"file_path": fp}}, p)
+		if got.Verdict != want {
+			t.Errorf("Write %s: got %s, want %s", fp, got.Verdict, want)
+		}
+	}
+	if d := Evaluate(bash("echo x > /c/repo/.leadyard/config.yaml"), p); d.Verdict != Deny {
+		t.Errorf("redirect to a Git Bash path: %s", d.Verdict)
 	}
 }
