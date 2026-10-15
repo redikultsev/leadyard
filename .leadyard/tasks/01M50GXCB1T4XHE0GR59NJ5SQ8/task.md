@@ -2,7 +2,7 @@
 id: 01M50GXCB1T4XHE0GR59NJ5SQ8
 title: 'Windows: gate paths, gate tests, doctor, line endings'
 kind: fix
-status: ready_to_merge
+status: merged
 class: 3
 proposed_class: 3
 attempt: 1
@@ -231,3 +231,4 @@ Round 2 fixes:
 - 2026-10-15 20:38:08 · human:redikultsev · finding_dismissed f-5b23ad · "f-87eb97 и f-5b23ad отклоняю"
 - 2026-10-15 20:38:08 · human:redikultsev · answer f-07d371 = follow-up, open · "f-07d371 — follow-up"
 - 2026-10-15 20:38:10 · human:redikultsev · transition accept_with_risk = waiting_human -> ready_to_merge · "accept_with_risk: уровень 3, проверки уровня 4 нет."
+- 2026-10-15 20:50:16 · human:redikultsev · transition merged = ready_to_merge -> merged · "Сливай ветку Windows в main локально ff-only, без push."
