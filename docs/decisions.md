@@ -189,3 +189,12 @@ edited; a new entry replaces an old one and links to it. Sections refer to
 69. **The repository checks out LF on every platform** (`* text=auto eol=lf`): with
     `core.autocrlf=true` a CRLF tree fails `gofmt -l` and the skills' front matter test, and a binary
     built from it embeds CRLF skills.
+
+## 2026-10-15 — LEADYARD_BIN in doctor
+
+70. **`doctor` gives its lookup probe LEADYARD_BIN by Claude Code's precedence:** the env of
+    `.claude/settings.local.json`, then `.claude/settings.json`, then the user settings
+    (`$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`), then the environment, and names
+    the source. It cannot see managed settings, `--settings`, `CLAUDE_CONFIG_DIR` set inside a settings
+    file, or a launch environment that wins over settings (Claude Desktop, self-hosted runners), so its
+    answer is the likely value, not a guarantee (§8.3).
