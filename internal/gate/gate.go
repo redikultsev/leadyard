@@ -90,9 +90,7 @@ func rel(p Policy, file string) string {
 		return ""
 	}
 	if runtime.GOOS == "windows" {
-		if w, ok := fromGitBash(file); ok {
-			file = w
-		}
+		file = windowsPath(file, p.Root)
 	}
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(p.Root, file)
@@ -115,6 +113,22 @@ func fromGitBash(p string) (string, bool) {
 }
 
 func isLetter(c byte) bool { return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' }
+
+// windowsPath names a file the way Windows opens it: a Git Bash drive path as C:\..., \\?\C:\... as C:\...,
+// and \... without a drive on the drive of root. Anything else comes back as given (decision 66).
+func windowsPath(p, root string) string {
+	if w, ok := fromGitBash(p); ok {
+		return w
+	}
+	p = strings.ReplaceAll(p, "/", `\`)
+	if len(p) >= 6 && strings.HasPrefix(p, `\\?\`) && isLetter(p[4]) && p[5] == ':' {
+		return p[4:]
+	}
+	if strings.HasPrefix(p, `\`) && !strings.HasPrefix(p, `\\`) && len(root) >= 2 && isLetter(root[0]) && root[1] == ':' {
+		return root[:2] + p
+	}
+	return p
+}
 
 // The checks below ignore letter case on every OS: Windows and macOS open .LEADYARD/config.yaml as
 // .leadyard/config.yaml, and on a case-sensitive file system refusing such a name fails closed (decision 67).
