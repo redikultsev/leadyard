@@ -2,7 +2,7 @@
 id: 01M50N96K0HFVSMTV7251NAMJ2
 title: 'doctor: LEADYARD_BIN from local and user settings'
 kind: fix
-status: ready_to_merge
+status: merged
 class: 2
 proposed_class: 2
 attempt: 1
@@ -153,3 +153,4 @@ Skipped: gate, level, ledger packages (not touched).
 - 2026-10-16 08:12:12 · human:redikultsev · test_edit_accepted internal/cli/doctor_test.go = a9cde258feffcf7110b84677eb3af1111f32d660 · "Правку doctor_test.go принимаю: TestLeadyardBin переписан под новый контракт."
 - 2026-10-16 08:12:12 · human:redikultsev · finding_dismissed f-359355 · "f-359355 отклоняю: строки doctor остаются наблюдением, как решено."
 - 2026-10-16 08:12:14 · human:redikultsev · transition approve_verdict = waiting_human -> ready_to_merge · "approve_verdict"
+- 2026-10-16 08:54:43 · human:redikultsev · transition merged = ready_to_merge -> merged · "Так давай, вливай, что ты ждешь"
